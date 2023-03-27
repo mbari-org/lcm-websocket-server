@@ -16,7 +16,7 @@ black = "^23.1.0"
 isort = "^5.12.0"
 
 [tool.poetry.scripts]
-lcm-websocket-server = "lcm_websocket_server.__main__:main"
+lcm-websocket-server = "lcm_websocket_server.app:main"
 
 [build-system]
 requires = ["poetry-core"]

@@ -80,7 +80,15 @@ class LCMTypeRegistry:
         Args:
             *package_name: Package to discover.
         """
-        packages = [import_module(package_name) for package_name in package_name]
+        packages = []
+        for package_name in package_name:
+            try:
+                package = import_module(package_name)
+            except ModuleNotFoundError:
+                print(f"Package {package_name} not found, skipping.")
+                continue
+            
+            packages.append(package)
         
         for package in packages:
             for loader, module_name, is_pkg in pkgutil.walk_packages(package.__path__):
@@ -117,15 +125,19 @@ def encode_event_dict(event: object) -> dict:
     return event_dict
 
 
-def encode_event_json(event: object, **kwargs) -> str:
+def encode_event_json(channel: str, event: object, **kwargs) -> str:
     """
     Encode an LCM event as a JSON string.
     
     Args:
+        channel: Channel of the event.
         event: LCM event to encode.
         **kwargs: Keyword arguments to pass to json.dumps.
     
     Returns:
         JSON string representation of the event.
     """
-    return json.dumps(encode_event_dict(event), **kwargs)
+    return json.dumps({
+        "channel": channel,
+        "event": encode_event_dict(event)
+    }, **kwargs)
