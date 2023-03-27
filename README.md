@@ -6,7 +6,7 @@ WebSocket server for republishing LCM messages.
 
 ```bash
 poetry build
-pip install dist/lcm-websocket-server-0.1.0-py3-none-any.whl
+pip install dist/lcm_websocket_server-0.1.0-py3-none-any.whl
 ```
 
 ## Usage
