@@ -125,12 +125,13 @@ def encode_event_dict(event: object) -> dict:
     return event_dict
 
 
-def encode_event_json(channel: str, event: object, **kwargs) -> str:
+def encode_event_json(channel: str, fingerprint: str, event: object, **kwargs) -> str:
     """
     Encode an LCM event as a JSON string.
     
     Args:
         channel: Channel of the event.
+        fingerprint: Fingerprint of the event.
         event: LCM event to encode.
         **kwargs: Keyword arguments to pass to json.dumps.
     
@@ -139,5 +140,6 @@ def encode_event_json(channel: str, event: object, **kwargs) -> str:
     """
     return json.dumps({
         "channel": channel,
+        "fingerprint": fingerprint,
         "event": encode_event_dict(event)
     }, **kwargs)

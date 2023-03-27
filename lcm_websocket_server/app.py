@@ -62,8 +62,12 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
             # Decode the event
             event = lcm_type_registry.decode(data)
             
+            # Get fingerprint hex
+            fingerprint = data[:8]
+            fingerprint_hex = fingerprint.hex()
+            
             # Encode the event as JSON
-            event_json = encode_event_json(channel, event)
+            event_json = encode_event_json(channel, fingerprint_hex, event)
             
             # Send the event to the client
             await websocket.send(event_json)
@@ -92,7 +96,7 @@ def main():
     Main function for the LCM WebSocket server.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", type=str, default="localhost", help="The host to listen on")
+    parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
     parser.add_argument("--port", type=int, default=8765, help="The port to listen on")
     parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
     parser.add_argument("lcm_packages", type=str, help="The LCM packages to discover LCM types from. Separate multiple packages with a comma.")
