@@ -7,6 +7,9 @@ import lcm
 import queue
 from threading import Thread
 
+from lcm_websocket_server.log import get_logger
+logger = get_logger(__name__)
+
 
 class LCMObserver:
     """
@@ -40,6 +43,7 @@ class LCMRepublisher:
         self._channel = channel
         
         self._thread = Thread(target=self._run)
+        self._thread.daemon = True
         self._stopped = False
         
         self._subscribers = []
@@ -74,7 +78,7 @@ class LCMRepublisher:
         """
         lc = lcm.LCM()
         lc.subscribe(self._channel, self._handler)
-        print(f"LCM republisher subscribed to channel '{self._channel}'")
+        logger.info(f"LCM republisher subscribed to channel '{self._channel}'")
         while not self._stopped:
             lc.handle()
     

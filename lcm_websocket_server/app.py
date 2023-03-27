@@ -1,11 +1,14 @@
 """
 LCM WebSocket server.
 """
+from lcm_websocket_server.log import get_logger
+logger = get_logger(__name__)
+
 # Ensure LCM installed
 try:
     import lcm
 except ImportError:
-    print("LCM Python module is not installed or could not be found, exiting.")
+    logger.critical("LCM Python module is not installed or could not be found, exiting.")
     exit(1)
 
 import argparse
@@ -39,7 +42,7 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
             path: The path of the WebSocket connection
         """
         ip, port = websocket.remote_address
-        print(f"Client connected from {ip}:{port} at {path}")
+        logger.info(f"Client connected from {ip}:{port} at {path}")
 
         # Create an LCM observer for this client
         observer = LCMObserver()
@@ -54,7 +57,7 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
                 channel, data = observer.get(block=False)
             except queue.Empty:
                 if websocket.closed:  # Check if the client disconnected
-                    print(f"Client at {ip}:{port} disconnected")
+                    logger.info(f"Client at {ip}:{port} disconnected")
                     break
                 await asyncio.sleep(0.1)
                 continue
@@ -75,12 +78,12 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
         # Unsubscribe the observer from the LCM republisher
         lcm_republisher.unsubscribe(observer)
         
-        print(f"Connection to {ip}:{port} finished cleanly")
+        logger.info(f"Connection to {ip}:{port} finished cleanly")
     
     # Start the server
-    print("Starting LCM WebSocket server...")
+    logger.info("Starting LCM WebSocket server...")
     async with serve(republish_lcm, host, port) as server:
-        print(f"LCM WebSocket server started at ws://{host}:{port}")
+        logger.info(f"LCM WebSocket server started at ws://{host}:{port}")
         
         # Close server on SIGINT and SIGTERM
         for signal in [SIGINT, SIGTERM]:
@@ -88,7 +91,10 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
         
         # Wait for the server to close
         await server.wait_closed()
-        print("LCM WebSocket server closed")
+        logger.info("LCM WebSocket server closed")
+        
+        # Stop the LCM republisher
+        lcm_republisher.stop()
 
 
 def main():
@@ -111,11 +117,9 @@ def main():
     registry = LCMTypeRegistry()
     registry.discover(*lcm_packages)
     if not registry.types:
-        print("No LCM types discovered, exiting.")
+        logger.critical("No LCM types discovered, exiting.")
         return
-    print("Discovered LCM types:")
-    for lcm_type in registry.types:
-        print(f"  {lcm_type.__name__}")
+    logger.info(f"Discovered LCM types: {', '.join([t.__name__ for t in registry.types])}")
 
     # Create an LCM republisher for the specified channel
     republisher = LCMRepublisher(channel)

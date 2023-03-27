@@ -6,6 +6,9 @@ import pkgutil
 from importlib import import_module
 from typing import Optional
 
+from lcm_websocket_server.log import get_logger
+logger = get_logger(__name__)
+
 
 class LCMTypeRegistry:
     """
@@ -85,7 +88,7 @@ class LCMTypeRegistry:
             try:
                 package = import_module(package_name)
             except ModuleNotFoundError:
-                print(f"Package {package_name} not found, skipping.")
+                logger.info(f"Package {package_name} not found, skipping.")
                 continue
             
             packages.append(package)
