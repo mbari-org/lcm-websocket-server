@@ -4,7 +4,7 @@ Utilities for working with LCM types and raw data.
 import json
 import pkgutil
 from importlib import import_module
-from typing import Optional
+from typing import Any, Optional
 
 from lcm_websocket_server.log import get_logger
 logger = get_logger(__name__)
@@ -104,6 +104,25 @@ class LCMTypeRegistry:
                         self.register(cls)
 
 
+def encode_value(value: Any) -> Any:
+    """
+    Encode a value. 
+    
+    If the value is an LCM event, encode it as a dictionary. If the value is a list, encode each element. Otherwise, return the value.
+    
+    Args:
+        value: Value to encode.
+    
+    Returns:
+        Encoded value.
+    """
+    if hasattr(value, "_get_packed_fingerprint"):
+        return encode_event_dict(value)
+    elif isinstance(value, list):
+        return list(map(encode_value, value))
+    return value
+
+
 def encode_event_dict(event: object) -> dict:
     """
     Encode an LCM event as a dictionary.
@@ -119,11 +138,9 @@ def encode_event_dict(event: object) -> dict:
     
     for slot, dimension in zip(event_type.__slots__, event_type.__dimensions__):
         value = getattr(event, slot)
+        value = encode_value(value)
         
-        if dimension is None:
-            event_dict[slot] = value
-        else:
-            event_dict[slot] = list(map(encode_event_json, value))
+        event_dict[slot] = value
 
     return event_dict
 
@@ -144,5 +161,5 @@ def encode_event_json(channel: str, fingerprint: str, event: object, **kwargs) -
     return json.dumps({
         "channel": channel,
         "fingerprint": fingerprint,
-        "event": encode_event_dict(event)
+        "event": encode_event_dict(event) if event is not None else {}
     }, **kwargs)
