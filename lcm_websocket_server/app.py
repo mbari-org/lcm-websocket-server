@@ -41,7 +41,7 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
             websocket: The WebSocket connection
             path: The path of the WebSocket connection
         """
-        ip, port = websocket.remote_address
+        ip, port = websocket.remote_address[:2]
         logger.info(f"Client connected from {ip}:{port} at {path}")
 
         # Create an LCM observer for this client
