@@ -27,3 +27,34 @@ For example, the `compas_lcmtypes` package contains LCM types for the CoMPAS lab
 ```bash
 pip install compas-lcmtypes
 ```
+
+## Docker
+
+### Build
+
+A Docker image to run the `lcm-websocket-server` can be built with:
+
+```bash
+./scripts/docker_build_compas.sh
+```
+
+This will create the `mbari/lcm-websocket-server:compas` image.
+
+### Run
+
+The container can be run with:
+
+```bash
+docker run \
+    --name lcm-websocket-server \
+    --rm \
+    -e HOST=0.0.0.0 \
+    -e PORT=8765 \
+    -e CHANNEL=".*" \
+    -e LCM_PACKAGES=compas_lcmtypes \
+    -p 8765:8765 \
+    -d \
+    mbari/lcm-websocket-server:compas
+```
+
+Note that the environment variables specified above are the defaults for the `mbari/lcm-websocket-server:compas` image. These can be omitted if the defaults are acceptable.

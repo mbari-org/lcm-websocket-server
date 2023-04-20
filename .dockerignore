@@ -1,0 +1,10 @@
+.dockerignore
+docker/
+
+.git
+.gitignore
+
+poetry.lock
+dist/
+
+*__pycache__/
