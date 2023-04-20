@@ -52,9 +52,11 @@ docker run \
     -e PORT=8765 \
     -e CHANNEL=".*" \
     -e LCM_PACKAGES=compas_lcmtypes \
-    -p 8765:8765 \
+    --network=host \
     -d \
     mbari/lcm-websocket-server:compas
 ```
 
 Note that the environment variables specified above are the defaults for the `mbari/lcm-websocket-server:compas` image. These can be omitted if the defaults are acceptable.
+
+It's recommended to run with `--network=host` to avoid issues with LCM over UDP. This will allow the container to use the host's network stack.
