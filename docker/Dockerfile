@@ -24,7 +24,7 @@ RUN git clone https://github.com/lcm-proj/lcm.git && \
     make install
 
 # Install Python dependencies
-RUN pip install poetry compas_lcmtypes
+RUN pip install poetry
 
 # Copy app into container
 COPY . /app
@@ -37,6 +37,6 @@ RUN pip install dist/*.whl
 ENV HOST=0.0.0.0
 ENV PORT=8765
 ENV CHANNEL=.*
-ENV LCM_PACKAGES=compas_lcmtypes
+ENV LCM_PACKAGES=
 
-CMD lcm-websocket-server --host "$HOST" --port "$PORT" --channel "$CHANNEL" "$LCM_PACKAGES"
+CMD PYTHONPATH=$PYTHONPATH:/app lcm-websocket-server --host "$HOST" --port "$PORT" --channel "$CHANNEL" "$LCM_PACKAGES"
