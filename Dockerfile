@@ -7,9 +7,8 @@ RUN apt update && \
     rm -rf /var/lib/apt/lists/*
 
 # Clone, build, and install LCM
-RUN git clone https://github.com/lcm-proj/lcm.git && \
+RUN git clone --depth=1 --branch=v1.5.0 https://github.com/lcm-proj/lcm.git && \
     cd lcm && \
-    git checkout v1.5.0 && \
     mkdir build && \
     cd build && \
     cmake \
