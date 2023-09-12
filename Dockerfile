@@ -1,4 +1,4 @@
-FROM python:3.10-slim-buster
+FROM python:3.10-slim-buster as builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install dependencies
@@ -29,9 +29,29 @@ RUN pip install poetry
 COPY . /app
 WORKDIR /app
 
-# Build and install lcm-websocket-server
+# Build lcm_websocket_server*.whl
 RUN poetry build
-RUN pip install dist/*.whl
+
+FROM python:3.10-slim-buster
+
+# pkg-config seems still needed
+RUN apt update && \
+    apt install -y --no-install-recommends pkg-config && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy lcm artifacts:
+COPY --from=builder /usr/local/lib/liblcm* /usr/local/lib/
+COPY --from=builder /usr/local/lib/lcm /usr/local/lib/lcm
+COPY --from=builder /usr/local/lib/pkgconfig/lcm.pc /usr/local/lib/pkgconfig/
+COPY --from=builder /usr/local/include/lcm /usr/local/include/lcm
+COPY --from=builder /usr/local/share/aclocal /usr/local/share/aclocal
+# lcm python bindings:
+COPY --from=builder /usr/local/lib/python3.10/site-packages/lcm /usr/local/lib/python3.10/site-packages/lcm
+
+# Install lcm-websocket-server:
+COPY --from=builder /app/dist/*.whl /tmp/
+RUN pip install /tmp/*.whl && \
+    rm -rf /tmp/*.whl
 
 ENV HOST=0.0.0.0
 ENV PORT=8765
