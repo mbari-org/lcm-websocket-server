@@ -10,10 +10,10 @@ FORMATTER = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(messag
 # Stream handler
 STREAM_HANDLER = logging.StreamHandler()
 STREAM_HANDLER.setFormatter(FORMATTER)
-STREAM_HANDLER.setLevel(logging.INFO)
+STREAM_HANDLER.setLevel(logging.WARNING)
 
 
-def get_logger(name: str, level: int = logging.INFO) -> logging.Logger:
+def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     """
     Get a logger. By default, the logger is attached to a StreamHandler with a predefined formatter for consistency.
     

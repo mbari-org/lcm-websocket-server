@@ -1,7 +1,7 @@
 """
 LCM WebSocket server.
 """
-from lcm_websocket_server.log import get_logger
+from lcm_websocket_server.log import get_logger, set_stream_handler_level
 logger = get_logger(__name__)
 
 # Ensure LCM installed
@@ -12,6 +12,7 @@ except ImportError:
     exit(1)
 
 import argparse
+import logging
 import asyncio
 import queue
 from signal import SIGINT, SIGTERM
@@ -20,9 +21,10 @@ from websockets import serve
 
 from lcm_websocket_server.lcmpubsub import LCMObserver, LCMRepublisher
 from lcm_websocket_server.lcmtypes import LCMTypeRegistry, encode_event_json
+from lcm_websocket_server.http_server import LCMWebSocketHTTPServer
 
 
-async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRepublisher, host: str, port: int):
+async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRepublisher, host: str, ws_port: int):
     """
     Main coroutine for the LCM WebSocket server.
     
@@ -49,41 +51,59 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
         
         # Subscribe the observer to the LCM republisher
         lcm_republisher.subscribe(observer)
+        
+        # Add the client to the HTTP server's client list
+        ws_clients.append(websocket)
 
         # Send all events to the client
-        while True:
-            # Block until an event is received
-            try:
-                channel, data = observer.get(block=False)
-            except queue.Empty:
-                if websocket.closed:  # Check if the client disconnected
-                    logger.info(f"Client at {ip}:{port} disconnected")
-                    break
-                await asyncio.sleep(0.1)
-                continue
+        try:
+            while True:
+                # Block until an event is received
+                try:
+                    channel, data = observer.get(block=False)
+                except queue.Empty:
+                    if websocket.closed:  # Check if the client disconnected
+                        logger.info(f"WebSocket client at {ip}:{port} disconnected")
+                        break
+                    await asyncio.sleep(0.1)
+                    continue
+                
+                # Decode the event
+                event = lcm_type_registry.decode(data)
+                
+                # Get fingerprint hex
+                fingerprint = data[:8]
+                fingerprint_hex = fingerprint.hex()
+                
+                # Encode the event as JSON
+                event_json = encode_event_json(channel, fingerprint_hex, event)
+                
+                # Send the event to the client
+                await websocket.send(event_json)
             
-            # Decode the event
-            event = lcm_type_registry.decode(data)
-            
-            # Get fingerprint hex
-            fingerprint = data[:8]
-            fingerprint_hex = fingerprint.hex()
-            
-            # Encode the event as JSON
-            event_json = encode_event_json(channel, fingerprint_hex, event)
-            
-            # Send the event to the client
-            await websocket.send(event_json)
+            logger.info(f"Connection to {ip}:{port} closed")
         
-        # Unsubscribe the observer from the LCM republisher
-        lcm_republisher.unsubscribe(observer)
+        except Exception as e:
+            logger.error(f"Connection to {ip}:{port} closed with exception: {e}")
         
-        logger.info(f"Connection to {ip}:{port} finished cleanly")
+        finally:
+            # Remove the client from the HTTP server's client list
+            ws_clients.remove(websocket)
+            
+            # Unsubscribe the observer from the LCM republisher
+            lcm_republisher.unsubscribe(observer)
+            
     
-    # Start the server
-    logger.info("Starting LCM WebSocket server...")
-    async with serve(republish_lcm, host, port) as server:
-        logger.info(f"LCM WebSocket server started at ws://{host}:{port}")
+    # Start the HTTP server daemon
+    http_port = ws_port + 1
+    ws_clients = []
+    http_server = LCMWebSocketHTTPServer(host, http_port, ws_clients)
+    http_server.start()
+    
+    # Start the WebSocket server
+    logger.debug("Starting LCM WebSocket server...")
+    async with serve(republish_lcm, host, ws_port) as server:
+        logger.info(f"LCM WebSocket server started at ws://{host}:{ws_port}")
         
         # Close server on SIGINT and SIGTERM
         for signal in [SIGINT, SIGTERM]:
@@ -91,10 +111,15 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
         
         # Wait for the server to close
         await server.wait_closed()
-        logger.info("LCM WebSocket server closed")
+        logger.debug("Shutting down LCM WebSocket server...")
         
         # Stop the LCM republisher
         lcm_republisher.stop()
+        
+        logger.info("LCM WebSocket server closed")
+    
+    # Stop the HTTP server daemon
+    http_server.stop()
 
 
 def main():
@@ -105,13 +130,18 @@ def main():
     parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
     parser.add_argument("--port", type=int, default=8765, help="The port to listen on")
     parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
+    parser.add_argument("-v", action="count", default=0, help="Increase verbosity. Use -v for INFO, -vv for DEBUG. Defaults to WARNING.")
     parser.add_argument("lcm_packages", type=str, help="The LCM packages to discover LCM types from. Separate multiple packages with a comma.")
     args = parser.parse_args()
     
     host = args.host
     port = args.port
     channel = args.channel
+    verbosity = {0: logging.WARNING, 1: logging.INFO, 2: logging.DEBUG}.get(args.v, logging.DEBUG)
     lcm_packages = args.lcm_packages.split(",")
+    
+    # Set up logging
+    set_stream_handler_level(verbosity)
     
     # Initialize the LCM type registry
     registry = LCMTypeRegistry()
