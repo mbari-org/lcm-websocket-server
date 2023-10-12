@@ -5,6 +5,7 @@ LCM pub/sub utilities.
 import lcm
 
 import queue
+import re
 from threading import Thread
 
 from lcm_websocket_server.log import get_logger
@@ -15,12 +16,28 @@ class LCMObserver:
     """
     Observer for an LCMObservable. Puts received events in a thread-safe queue.
     """
-    def __init__(self):
+    def __init__(self, channel_regex: str = ".*"):
         self._queue = queue.Queue()
+        self._channel_regex = channel_regex
     
+    def match(self, channel: str) -> bool:
+        """
+        Check if the observer matches a given channel.
+
+        Args:
+            channel: Channel name
+        
+        Returns:
+            True if the observer matches the channel, False otherwise.
+        """
+        try:
+            return re.fullmatch(self._channel_regex, channel) is not None
+        except:
+            return False
+
     def handle(self, event):
         """
-        Handles an LCM event.
+        Handle an LCM event.
         """
         self._queue.put(event)
     
@@ -91,4 +108,5 @@ class LCMRepublisher:
             data: The LCM data
         """
         for subscriber in self._subscribers:
-            subscriber.handle((channel, data))
+            if subscriber.match(channel):
+                subscriber.handle((channel, data))
