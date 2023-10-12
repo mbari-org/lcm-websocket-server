@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import queue
 from signal import SIGINT, SIGTERM
+from urllib.parse import unquote
 
 from websockets import serve
 
@@ -44,8 +45,14 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
         ip, port = websocket.remote_address[:2]
         logger.info(f"Client connected from {ip}:{port} at {path}")
 
+        # Extract channel regex
+        channel_regex = unquote(path.lstrip('/'))
+        if not channel_regex:  # empty path -> subscribe to all channels
+            channel_regex = '.*'
+
         # Create an LCM observer for this client
-        observer = LCMObserver()
+        observer = LCMObserver(channel_regex=channel_regex)
+        logger.debug(f"Created LCM observer with channel regex {channel_regex}")
         
         # Subscribe the observer to the LCM republisher
         lcm_republisher.subscribe(observer)

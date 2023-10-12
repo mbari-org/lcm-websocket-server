@@ -4,6 +4,16 @@ WebSocket server for republishing LCM messages.
 
 ## Installation
 
+**You must have the LCM Python package installed before using `lcm-websocket-server`.** See the [LCM build instructions](http://lcm-proj.github.io/lcm/content/build-instructions.html) for more information.
+
+### From PyPI
+
+```bash
+pip install lcm-websocket-server
+```
+
+### From source
+
 ```bash
 poetry build
 pip install dist/lcm_websocket_server-*-py3-none-any.whl
