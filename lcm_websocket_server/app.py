@@ -81,6 +81,9 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
             
             # Send the event to the client
             await websocket.send(event_json)
+
+            # Signal that the observer has finished consuming the event
+            observer.task_done()
         
         # Unsubscribe the observer from the LCM republisher
         lcm_republisher.unsubscribe(observer)

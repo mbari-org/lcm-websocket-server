@@ -46,6 +46,12 @@ class LCMObserver:
         Gets the next event from the queue.
         """
         return self._queue.get(*args, **kwargs)
+    
+    def task_done(self):
+        """
+        Indicate that a formerly enqueued event (i.e., the last call to `LCMObserver.get`) is complete.
+        """
+        self._queue.task_done()
 
 
 class LCMRepublisher:
