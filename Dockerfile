@@ -40,11 +40,12 @@ RUN apt update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy lcm artifacts:
-COPY --from=builder /usr/local/lib/liblcm* /usr/local/lib/
-COPY --from=builder /usr/local/lib/lcm /usr/local/lib/lcm
-COPY --from=builder /usr/local/lib/pkgconfig/lcm.pc /usr/local/lib/pkgconfig/
-COPY --from=builder /usr/local/include/lcm /usr/local/include/lcm
-COPY --from=builder /usr/local/share/aclocal /usr/local/share/aclocal
+COPY --from=builder /usr/local/lib/liblcm* /usr/lib/
+COPY --from=builder /usr/local/lib/lcm /usr/lib/lcm
+COPY --from=builder /usr/local/lib/pkgconfig/lcm.pc /usr/lib/pkgconfig/
+COPY --from=builder /usr/local/include/lcm /usr/include/lcm
+COPY --from=builder /usr/local/share/aclocal /usr/share/aclocal
+COPY --from=builder /usr/local/bin/lcm* /usr/bin/
 # lcm python bindings:
 COPY --from=builder /usr/local/lib/python3.10/site-packages/lcm /usr/local/lib/python3.10/site-packages/lcm
 
