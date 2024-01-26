@@ -19,7 +19,10 @@ class LCMObserver:
     def __init__(self, channel_regex: str = ".*"):
         self._queue = queue.Queue()
         self._channel_regex = channel_regex
-    
+
+        self._put_counter = 0
+        self._get_counter = 0
+
     def match(self, channel: str) -> bool:
         """
         Check if the observer matches a given channel.
@@ -39,12 +42,20 @@ class LCMObserver:
         """
         Handle an LCM event.
         """
+        if self._put_counter % 1000 == 0:
+            qsize = self._queue.qsize()
+            logger.info(f"PUT called {self._put_counter} times  {qsize=}")
+        self._put_counter += 1
         self._queue.put(event)
-    
+
     def get(self, *args, **kwargs):
         """
         Gets the next event from the queue.
         """
+        if self._get_counter % 1000 == 0:
+            qsize = self._queue.qsize()
+            logger.info(f"GET called {self._get_counter} times  {qsize=}")
+        self._get_counter += 1
         return self._queue.get(*args, **kwargs)
     
     def task_done(self):

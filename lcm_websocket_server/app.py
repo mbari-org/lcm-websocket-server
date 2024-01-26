@@ -80,7 +80,10 @@ async def run_server(lcm_type_registry: LCMTypeRegistry, lcm_republisher: LCMRep
             event_json = encode_event_json(channel, fingerprint_hex, event)
             
             # Send the event to the client
-            await websocket.send(event_json)
+            try:
+                await websocket.send(event_json)
+            except Exception as e:
+                logger.warning(f"Failed to send event to client at {ip}:{port}: {e}")
 
             # Signal that the observer has finished consuming the event
             observer.task_done()
