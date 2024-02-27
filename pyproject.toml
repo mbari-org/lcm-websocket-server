@@ -10,6 +10,9 @@ packages = [{include = "lcm_websocket_server"}]
 [tool.poetry.dependencies]
 python = "^3.9"
 websockets = "^10.4"
+numpy = {version = "^1.26.4", optional = true}
+opencv-python = {version = "^4.9.0.80", optional = true}
+compas-lcmtypes = {version = "0.1.0", optional = true}
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.1.0"
@@ -17,6 +20,14 @@ isort = "^5.12.0"
 
 [tool.poetry.scripts]
 lcm-websocket-server = "lcm_websocket_server.app:main"
+lcm-websocket-jpeg-proxy = "lcm_websocket_server.jpegproxy_app:main"
+
+[tool.poetry.extras]
+imagetrans = [
+    "numpy",
+    "opencv-python",
+    "compas-lcmtypes"
+]
 
 [build-system]
 requires = ["poetry-core"]
