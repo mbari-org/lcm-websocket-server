@@ -86,7 +86,7 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
-    parser.add_argument("--port", type=int, default=8765, help="The port to listen on")
+    parser.add_argument("--port", type=int, default=8765, help="The port to listen on. Default: %(default)s")
     parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
     parser.add_argument("lcm_packages", type=str, help="The LCM packages to discover LCM types from. Separate multiple packages with a comma.")

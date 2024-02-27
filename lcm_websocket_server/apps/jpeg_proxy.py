@@ -20,7 +20,7 @@ from compas_lcmtypes.senlcm import image_t
 import cv2
 from numpy import ndarray
 
-from lcm_websocket_server.lcm_utils.pubsub import LCMRepublisher
+from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
 from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, UnsupportedPixelFormatError, get_decoder
 from lcm_websocket_server.lib.log import LogMixin
 from lcm_websocket_server.lib.server import LCMWebSocketServer
@@ -86,7 +86,7 @@ class DownsamplingMJPEGEncoder(MJPEGEncoder):
         return super().encode(image)
 
 
-async def run(host: str, port: int, channel: str):
+async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: int = 75):
     """
     Run the LCM WebSocket JPEG proxy server.
     
@@ -94,6 +94,8 @@ async def run(host: str, port: int, channel: str):
         host: The host to listen on.
         port: The port to listen on.
         channel: The LCM channel pattern to subscribe to.
+        scale: The scale factor to resize the image by.
+        quality: The JPEG quality level. Clamped to the range [0, 100].
     """
     # Create an LCM republisher
     logger.debug(f"Creating LCM republisher for channel '{channel}'")
@@ -101,7 +103,8 @@ async def run(host: str, port: int, channel: str):
     lcm_republisher.start()
 
     # Create an image encoder
-    jpeg_encoder = DownsamplingMJPEGEncoder(scale=0.3, params=[cv2.IMWRITE_JPEG_QUALITY, 50])
+    quality = round(max(0, min(quality, 100)))
+    jpeg_encoder = DownsamplingMJPEGEncoder(scale=scale, params=[cv2.IMWRITE_JPEG_QUALITY, quality])
 
     # Create an LCM WebSocket server
     handler = ImageMessageToJPEGHandler(jpeg_encoder)
@@ -121,14 +124,18 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
-    parser.add_argument("--port", type=int, default=8766, help="The port to listen on")
+    parser.add_argument("--port", type=int, default=8766, help="The port to listen on. Default: %(default)s")
     parser.add_argument("--channel", type=str, default=".*", help="The LCM channel pattern to subscribe to. Use '.*' to subscribe to all channels.")
+    parser.add_argument("--scale", type=float, default=1.0, help="The scale factor to resize the image by. Default: %(default)s")
+    parser.add_argument("--quality", type=int, default=75, help="The JPEG quality level, 0-100. Default: %(default)s")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
     args = parser.parse_args()
     
     host = args.host
     port = args.port
     channel = args.channel
+    scale = args.scale
+    quality = args.quality
     verbosity = args.verbose
     
     # Set the verbosity level
@@ -137,7 +144,7 @@ def main():
     # Run the server coroutine
     logger.info(f"Starting LCM WebSocket JPEG proxy at ws://{host}:{port}")
     try:
-        asyncio.run(run(host, port, channel))
+        asyncio.run(run(host, port, channel, scale=scale, quality=quality))
     except KeyboardInterrupt:
         logger.info(f"Stopped")
 
