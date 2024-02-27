@@ -39,10 +39,6 @@ class ImageEncoder(ABC):
     Abstract class for image encoders.
     """
 
-    def __init__(self, width: int, height: int):
-        self.width = width
-        self.height = height
-
     @abstractmethod
     def encode(self, image: np.ndarray) -> bytes:
         """
@@ -230,8 +226,8 @@ class BayerRGGBDecoder(ImageDecoder):
 
 
 class MJPEGEncoder(ImageEncoder):
-    def __init__(self, width: int, height: int, params: Optional[Sequence[int]] = None):
-        super().__init__(width, height)
+    def __init__(self, params: Optional[Sequence[int]] = None):
+        super().__init__()
         self.params = params or [cv2.IMWRITE_JPEG_QUALITY, 90]
 
     def encode(self, image: np.ndarray) -> bytes:

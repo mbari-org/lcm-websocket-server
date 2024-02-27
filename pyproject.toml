@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lcm-websocket-server"
-version = "0.1.1"
+version = "0.2.0"
 description = "WebSocket server for republishing LCM messages"
 authors = ["Kevin Barnard <kbarnard@mbari.org>"]
 license = "MIT"
@@ -19,11 +19,12 @@ black = "^23.1.0"
 isort = "^5.12.0"
 
 [tool.poetry.scripts]
-lcm-websocket-server = "lcm_websocket_server.app:main"
-lcm-websocket-jpeg-proxy = "lcm_websocket_server.jpegproxy_app:main"
+lcm-websocket-server = "lcm_websocket_server.apps.json_proxy:main"
+lcm-websocket-json-proxy = "lcm_websocket_server.apps.json_proxy:main"
+lcm-websocket-jpeg-proxy = "lcm_websocket_server.apps.jpeg_proxy:main"
 
 [tool.poetry.extras]
-imagetrans = [
+image = [
     "numpy",
     "opencv-python",
     "compas-lcmtypes"

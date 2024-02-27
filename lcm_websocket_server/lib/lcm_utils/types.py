@@ -6,7 +6,7 @@ import pkgutil
 from importlib import import_module
 from typing import Any, Optional
 
-from lcm_websocket_server.log import get_logger
+from lcm_websocket_server.lib.log import get_logger
 logger = get_logger(__name__)
 
 
