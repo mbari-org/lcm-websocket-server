@@ -27,7 +27,10 @@ pip install dist/lcm_websocket_server-*-py3-none-any.whl
 
 ### JSON Proxy
 
-The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection.
+The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection. **This command requires the `image` extension to be installed.** This can be done with:
+```bash
+pip install lcm-websocket-server[image]
+```
 
 > [!NOTE]
 > The `lcm-websocket-server` command has been renamed to `lcm-websocket-json-proxy`. The old name is still available for backwards compatibility, but it is recommended to use the new name.
