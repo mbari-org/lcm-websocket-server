@@ -13,6 +13,7 @@ websockets = "^10.4"
 numpy = {version = "^1.26.4", optional = true}
 opencv-python = {version = "^4.9.0.80", optional = true}
 compas-lcmtypes = {version = "0.1.0", optional = true}
+lcmlog-py = "^0.1.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.1.0"
@@ -22,6 +23,7 @@ isort = "^5.12.0"
 lcm-websocket-server = "lcm_websocket_server.apps.json_proxy:main"
 lcm-websocket-json-proxy = "lcm_websocket_server.apps.json_proxy:main"
 lcm-websocket-jpeg-proxy = "lcm_websocket_server.apps.jpeg_proxy:main"
+lcm-websocket-dial-proxy = "lcm_websocket_server.apps.dial_proxy:main"
 
 [tool.poetry.extras]
 image = [
