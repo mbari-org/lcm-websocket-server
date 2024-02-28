@@ -107,7 +107,7 @@ class DialHandler(LogMixin):
 
 async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: int = 75):
     """
-    Run the LCM WebSocket JSON proxy server.
+    Run the LCM WebSocket Dial proxy server.
     
     Args:
         host: Host to bind to
