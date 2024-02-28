@@ -65,8 +65,6 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
             self.logger.warning(f"Failed to encode image as JPEG: {e}")
             return None
 
-        self.logger.info(f"Encoded image as JPEG ({len(jpeg)} bytes)")
-
         return jpeg
 
 
