@@ -69,7 +69,7 @@ lcm-websocket-jpeg-proxy --host localhost --port 8766 --quality 75 --scale 1.0 -
 
 The `lcm-websocket-dial-proxy` command is a combined version of the JSON and JPEG proxies, tweaked for [Dial](https://github.com/mbari-org/dial). It can be used to run a server that republishes CoMPAS `senlcm::image_t` LCM messages as JPEG images and all other CoMPAS LCM messages as JSON over a WebSocket connection. All text frames sent over the WebSocket connection are encoded as JSON. Binary frames are JPEG images with a prepended header and channel name that conforms to the [LCM log file format](http://lcm-proj.github.io/lcm/content/log-file-format.html) with the following considerations:
 - The *event number* is always 0. This is because the server is not reading from a log file, but rather republishing messages as they are received.
-- The *timestamp* is the time the message was encoded as a JPEG image.
+- The *timestamp* is the timestamp from the `image_t` event's contained `header_t` timestamp. The timestamp is conventionally in units of microseconds, but this is not guaranteed.
 - The *data length* represents the original image data length, not the length of the JPEG image data.
 
 Therefore, the binary frame is laid out as follows:

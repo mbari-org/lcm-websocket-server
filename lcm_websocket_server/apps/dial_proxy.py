@@ -21,6 +21,7 @@ import argparse
 import asyncio
 
 from compas_lcmtypes.senlcm import image_t
+from compas_lcmtypes.stdlcm import header_t
 from lcmlog.event import Header
 
 from lcm_websocket_server.lib.lcm_utils.types import LCMTypeRegistry
@@ -29,16 +30,6 @@ from lcm_websocket_server.lib.log import LogMixin
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.apps.jpeg_proxy import DownsamplingMJPEGEncoder, ImageMessageToJPEGHandler
 from lcm_websocket_server.apps.json_proxy import JSONHandler
-
-
-def get_microseconds_since_epoch() -> int:
-    """
-    Get the current time in microseconds since the epoch.
-    
-    Returns:
-        The current time in microseconds since the epoch.
-    """
-    return int(time.time() * 1e6)
 
 
 class DialHandler(LogMixin):
@@ -69,8 +60,12 @@ class DialHandler(LogMixin):
         Returns:
             The encoded binary frame, or None if the message could not be encoded.
         """
+        # Decode the image_t to get the payload header timestamp
+        image_event = image_t.decode(data)
+        payload_header: header_t = image_event.header
+        
         # Encode the image as JPEG
-        jpeg_bytes = self._image_handler.handle(channel, data)
+        jpeg_bytes = self._image_handler.handle(channel, image_event)
         if jpeg_bytes is None:
             return None
         
@@ -78,7 +73,7 @@ class DialHandler(LogMixin):
         channel_name_utf8 = channel.encode("utf-8")
         header = Header(
             0, 
-            get_microseconds_since_epoch(), 
+            payload_header.timestamp,
             len(channel_name_utf8), 
             len(data)
         )

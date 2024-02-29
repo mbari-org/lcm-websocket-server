@@ -14,7 +14,7 @@ except ImportError:
 
 import argparse
 import asyncio
-from typing import Optional
+from typing import Optional, Union
 
 from compas_lcmtypes.senlcm import image_t
 import cv2
@@ -35,13 +35,17 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
     def __init__(self, encoder: MJPEGEncoder):
         self._encoder = encoder
     
-    def handle(self, channel: str, data: bytes) -> Optional[bytes]:
-        # Decode the LCM message
-        try:
-            image_event = image_t.decode(data)
-        except Exception as e:
-            self.logger.debug(f"Failed to decode image_t event from channel {channel}: {e}")
-            return None
+    def handle(self, channel: str, data: Union[bytes, image_t]) -> Optional[bytes]:
+        # Check if the data is already an image_t. If so, use it directly
+        if isinstance(data, image_t):
+            image_event = data
+        else:
+            # Decode the LCM message
+            try:
+                image_event = image_t.decode(data)
+            except Exception as e:
+                self.logger.debug(f"Failed to decode image_t event from channel {channel}: {e}")
+                return None
 
         # Create a decoder
         try:
