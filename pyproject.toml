@@ -11,7 +11,7 @@ packages = [{include = "lcm_websocket_server"}]
 python = "^3.9"
 websockets = "^10.4"
 numpy = {version = "^1.26.4", optional = true}
-opencv-python = {version = "^4.9.0.80", optional = true}
+opencv-python-headless = {version = "^4.9.0.80", optional = true}
 compas-lcmtypes = {version = "0.1.0", optional = true}
 lcmlog-py = "^0.1.0"
 
@@ -28,7 +28,7 @@ lcm-websocket-dial-proxy = "lcm_websocket_server.apps.dial_proxy:main"
 [tool.poetry.extras]
 image = [
     "numpy",
-    "opencv-python",
+    "opencv-python-headless",
     "compas-lcmtypes"
 ]
 
