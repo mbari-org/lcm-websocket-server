@@ -6,5 +6,6 @@ docker/
 
 poetry.lock
 dist/
+scripts/
 
 *__pycache__/
