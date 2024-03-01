@@ -4,10 +4,11 @@
 
 DOCKEROPT=${1:-""}
 VERSION=$(grep '^version =' pyproject.toml | awk -F'"' '{print $2}')
-DOCKERTAG="mbari/lcm-websocket-server:$VERSION"
+DOCKERTAG="$VERSION"
 if [ -n "$DOCKEROPT" ]; then
-    DOCKERTAG="mbari/lcm-websocket-server:$DOCKEROPT-$VERSION"
+    DOCKERTAG="$DOCKERTAG-$DOCKEROPT"
 fi
+DOCKERIMAGE="mbari/lcm-websocket-server:$DOCKERTAG"
 
-echo "Pushing docker image $DOCKERTAG"
-docker push $DOCKERTAG
+echo "Pushing docker image $DOCKERIMAGE"
+docker push $DOCKERIMAGE

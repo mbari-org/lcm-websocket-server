@@ -21,7 +21,7 @@ fi
 VERSION=$(grep '^version =' pyproject.toml | awk -F'"' '{print $2}')
 DOCKERTAG="$VERSION"
 if [ -n "$DOCKEROPT" ]; then
-    DOCKERTAG="$DOCKEROPT-$VERSION"
+    DOCKERTAG="$DOCKERTAG-$DOCKEROPT"
 fi
 
 DOCKERIMAGE="mbari/lcm-websocket-server:$DOCKERTAG"
