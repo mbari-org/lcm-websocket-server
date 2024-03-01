@@ -1,5 +1,5 @@
 ARG VERSION=latest
-FROM mbari/lcm-websocket-server:compas-lcmtypes-${VERSION}
+FROM mbari/lcm-websocket-server:$VERSION-compas-lcmtypes
 
 # Install lcm-websocket-server with the image extra
 RUN pip install $(ls /tmp/*.whl | head -n 1)[image]
