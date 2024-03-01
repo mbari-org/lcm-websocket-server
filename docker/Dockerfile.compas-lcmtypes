@@ -1,0 +1,6 @@
+ARG VERSION=latest
+FROM mbari/lcm-websocket-server:${VERSION}
+
+RUN pip install compas-lcmtypes==0.1.0
+
+ENV LCM_PACKAGES=compas_lcmtypes

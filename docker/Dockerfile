@@ -51,8 +51,7 @@ COPY --from=builder /usr/local/lib/python3.10/site-packages/lcm /usr/local/lib/p
 
 # Install lcm-websocket-server:
 COPY --from=builder /app/dist/*.whl /tmp/
-RUN pip install /tmp/*.whl && \
-    rm -rf /tmp/*.whl
+RUN pip install /tmp/*.whl
 
 ENV HOST=0.0.0.0
 ENV PORT=8765
