@@ -27,10 +27,7 @@ pip install dist/lcm_websocket_server-*-py3-none-any.whl
 
 ### JSON Proxy
 
-The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection. **This command requires the `image` extension to be installed.** This can be done with:
-```bash
-pip install lcm-websocket-server[image]
-```
+The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection. 
 
 > [!NOTE]
 > The `lcm-websocket-server` command has been renamed to `lcm-websocket-json-proxy`. The old name is still available for backwards compatibility, but it is recommended to use the new name.
@@ -60,6 +57,11 @@ The `lcm-websocket-jpeg-proxy` command can be used to run a server that republis
 
 See the [CoMPAS LCM types repository](https://bitbucket.org/compas-sw/compas_lcmtypes) for more information.
 
+**This command requires the `image` extension to be installed.** This can be done with:
+```bash
+pip install lcm-websocket-server[image]
+```
+
 To run the server locally on port 8766 and republish images for the `CAMERA` channel at 75% quality at 1.0 scale:
 ```bash
 lcm-websocket-jpeg-proxy --host localhost --port 8766 --quality 75 --scale 1.0 --channel CAMERA
@@ -75,6 +77,11 @@ The `lcm-websocket-dial-proxy` command is a combined version of the JSON and JPE
 Therefore, the binary frame is laid out as follows:
 ```
 [28 byte LCM header] [channel name] [JPEG]
+```
+
+**This command requires the `image` extension to be installed.** This can be done with:
+```bash
+pip install lcm-websocket-server[image]
 ```
 
 To run the server locally on port 8765 and republish messages on all channels (JPEG quality and scale are configured as before):
