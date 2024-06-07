@@ -182,14 +182,14 @@ class RGBDecoder(ImageDecoder):
 
 class GrayEncoder(ImageEncoder):
     def encode(self, image: np.ndarray) -> bytes:
-        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR).tobytes()
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).tobytes()
 
 
 class GrayDecoder(ImageDecoder):
     def decode(self, data: bytes) -> np.ndarray:
         return cv2.cvtColor(
             np.frombuffer(data, dtype=np.uint8).reshape(self.height, self.width, 1),
-            cv2.COLOR_BGR2GRAY,
+            cv2.COLOR_GRAY2BGR,
         )
 
 
