@@ -120,8 +120,12 @@ def encode_value(value: Any) -> Any:
         return encode_event_dict(value)
     elif isinstance(value, list):
         return list(map(encode_value, value))
+    elif isinstance(value, dict):
+        return {key: encode_value(value) for key, value in value.items()}
     elif isinstance(value, bytes):
         return value.hex()
+    elif isinstance(value, float) and value != value:
+        return None
     return value
 
 
