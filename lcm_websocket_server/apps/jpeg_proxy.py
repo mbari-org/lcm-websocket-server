@@ -2,22 +2,12 @@
 LCM WebSocket JPEG proxy server.
 """
 
-from lcm_websocket_server.lib.log import get_logger, set_stream_handler_verbosity
-logger = get_logger("lcm-websocket-jpeg-proxy")
-
-# Ensure LCM installed
-try:
-    import lcm
-except ImportError:
-    logger.critical("LCM Python module is not installed or could not be found, exiting.")
-    exit(1)
-
 import argparse
 import asyncio
 from typing import Optional, Union
 
-from compas_lcmtypes.senlcm import image_t
 import cv2
+from compas_lcmtypes.senlcm import image_t
 from numpy import ndarray
 
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
@@ -25,6 +15,10 @@ from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, Unsupporte
 from lcm_websocket_server.lib.log import LogMixin
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
+from lcm_websocket_server.lib.log import get_logger, set_stream_handler_verbosity
+
+
+logger = get_logger("lcm-websocket-jpeg-proxy")
 
 
 class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
@@ -113,7 +107,7 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
     server = LCMWebSocketServer(host, port, handler, lcm_republisher)
 
     # Start the server
-    logger.debug(f"Starting LCM WebSocket server")
+    logger.debug("Starting LCM WebSocket server")
     await server.serve()
     
     # Stop the LCM republisher
@@ -148,7 +142,7 @@ def main():
     try:
         asyncio.run(run(host, port, channel, scale=scale, quality=quality))
     except KeyboardInterrupt:
-        logger.info(f"Stopped")
+        logger.info("Stopped")
 
 
 if __name__ == "__main__":

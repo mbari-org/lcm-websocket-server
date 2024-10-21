@@ -3,33 +3,26 @@ LCM WebSocket Proxy Server for the Dial visualization webapp.
 """
 
 from io import BytesIO
-import time
 from typing import Optional, Union
-
-import cv2
-from lcm_websocket_server.lib.log import get_logger, set_stream_handler_verbosity
-logger = get_logger("lcm-websocket-dial-proxy")
-
-# Ensure LCM installed
-try:
-    import lcm
-except ImportError:
-    logger.critical("LCM Python module is not installed or could not be found, exiting.")
-    exit(1)
 
 import argparse
 import asyncio
 
-from compas_lcmtypes.senlcm import image_t
-from compas_lcmtypes.stdlcm import header_t
+import cv2
+from senlcm import image_t
+from stdlcm import header_t
 from lcmlog.event import Header
+from lcmutils import LCMTypeRegistry
 
-from lcm_websocket_server.lib.lcm_utils.types import LCMTypeRegistry
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
 from lcm_websocket_server.lib.log import LogMixin
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.apps.jpeg_proxy import DownsamplingMJPEGEncoder, ImageMessageToJPEGHandler
 from lcm_websocket_server.apps.json_proxy import JSONHandler
+from lcm_websocket_server.lib.log import get_logger, set_stream_handler_verbosity
+
+
+logger = get_logger("lcm-websocket-dial-proxy")
 
 
 class DialHandler(LogMixin):
@@ -118,7 +111,22 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
     
     # Initialize the LCM type registry
     registry = LCMTypeRegistry()
-    registry.discover("compas_lcmtypes")
+    molars_package_names = [
+        "stdlcm",
+        "navlcm",
+        "senlcm",
+        "geolcm",
+        "lcm_action_server",
+        "mission_server",
+        "nav_server",
+        "control_server",
+    ]
+    logger.info(f"Discovering LCM types in MolaRS packages: {', '.join(molars_package_names)}")
+    for package_name in molars_package_names:
+        try:
+            registry.discover(package_name)
+        except ModuleNotFoundError:
+            logger.error(f"Could not discover types in MolaRS package '{package_name}'")
     if not registry.types:
         logger.critical("No LCM types discovered, exiting.")
         return
@@ -137,7 +145,7 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
     server = LCMWebSocketServer(host, port, handler, lcm_republisher)
 
     # Start the server
-    logger.debug(f"Starting LCM WebSocket server")
+    logger.debug("Starting LCM WebSocket server")
     await server.serve()
     
     # Stop the LCM republisher
@@ -172,7 +180,7 @@ def main():
     try:
         asyncio.run(run(host, port, channel, scale=scale, quality=quality))
     except KeyboardInterrupt:
-        logger.info(f"Stopped")
+        logger.info("Stopped")
 
 
 if __name__ == "__main__":

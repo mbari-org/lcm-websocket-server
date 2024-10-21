@@ -1,24 +1,20 @@
 """
 LCM WebSocket JSON proxy server.
 """
-from typing import List, Optional
-from lcm_websocket_server.lib.log import LogMixin, get_logger, set_stream_handler_verbosity
-logger = get_logger("lcm-websocket-json-proxy")
-
-# Ensure LCM installed
-try:
-    import lcm
-except ImportError:
-    logger.critical("LCM Python module is not installed or could not be found, exiting.")
-    exit(1)
-
 import argparse
 import asyncio
+from typing import List, Optional
+
+from lcmutils import LCMTypeRegistry
 
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
-from lcm_websocket_server.lib.lcm_utils.types import LCMTypeRegistry, encode_event_json
+from lcm_websocket_server.lib.lcm_utils.types import encode_event_json
+from lcm_websocket_server.lib.log import LogMixin, get_logger, set_stream_handler_verbosity
+
+
+logger = get_logger("lcm-websocket-json-proxy")
 
 
 class JSONHandler(LCMWebSocketHandler, LogMixin):
@@ -62,7 +58,11 @@ async def run(host: str, port: int, channel: str, lcm_packages: List[str]):
     
     # Initialize the LCM type registry
     registry = LCMTypeRegistry()
-    registry.discover(*lcm_packages)
+    for package in lcm_packages:
+        try:
+            registry.discover(package)
+        except ModuleNotFoundError:
+            logger.error(f"Failed to discover LCM types in package '{package}'")
     if not registry.types:
         logger.critical("No LCM types discovered, exiting.")
         return
@@ -73,7 +73,7 @@ async def run(host: str, port: int, channel: str, lcm_packages: List[str]):
     server = LCMWebSocketServer(host, port, handler, lcm_republisher)
 
     # Start the server
-    logger.debug(f"Starting LCM WebSocket server")
+    logger.debug("Starting LCM WebSocket server")
     await server.serve()
     
     # Stop the LCM republisher
@@ -106,7 +106,7 @@ def main():
     try:
         asyncio.run(run(host, port, channel, lcm_packages))
     except KeyboardInterrupt:
-        logger.info(f"Stopped")
+        logger.info("Stopped")
 
 
 if __name__ == "__main__":
