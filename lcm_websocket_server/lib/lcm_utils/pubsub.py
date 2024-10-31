@@ -2,11 +2,10 @@
 LCM pub/sub utilities.
 """
 
-import lcm
-
 import queue
 import re
-from threading import Thread
+
+from lcmutils import LCMDaemon
 
 from lcm_websocket_server.lib.log import LogMixin
 
@@ -24,29 +23,35 @@ class LCMObserver:
         Check if the observer matches a given channel.
 
         Args:
-            channel: Channel name
+            channel (str): Channel name
         
         Returns:
-            True if the observer matches the channel, False otherwise.
+            bool: True if the observer matches the channel, False otherwise.
         """
         try:
             return re.fullmatch(self._channel_regex, channel) is not None
-        except:
+        except re.error:
             return False
 
-    def handle(self, event):
+    def handle(self, event: tuple[str, bytes]) -> None:
         """
         Handle an LCM event.
+        
+        Args:
+            event (tuple[str, bytes]): The LCM event (channel, data)
         """
         self._queue.put(event)
     
-    def get(self, *args, **kwargs):
+    def get(self, *args, **kwargs) -> tuple[str, bytes]:
         """
-        Gets the next event from the queue.
+        Get the next event from the queue.
+        
+        Returns:
+            tuple[str, bytes]: The next event (channel, data)
         """
         return self._queue.get(*args, **kwargs)
     
-    def task_done(self):
+    def task_done(self) -> None:
         """
         Indicate that a formerly enqueued event (i.e., the last call to `LCMObserver.get`) is complete.
         """
@@ -60,57 +65,52 @@ class LCMRepublisher(LogMixin):
     def __init__(self, channel: str):
         """
         Args:
-            channel: The LCM channel to subscribe to.
+            channel (str): The LCM channel regex to subscribe to.
         """
         self._channel = channel
         
-        self._thread = Thread(target=self._run)
-        self._thread.daemon = True
-        self._stopped = False
+        self._daemon = LCMDaemon()
+        self._daemon.subscribe(self._channel)(self._handle)
         
-        self._subscribers = []
+        self._subscribers: list[LCMObserver] = []
     
-    def subscribe(self, subscriber: LCMObserver):
+    def subscribe(self, subscriber: LCMObserver) -> None:
         """
-        Subscribes a subscriber to this observable.
+        Subscribe a subscriber to this observable.
+        
+        Args:
+            subscriber (LCMObserver): The subscriber to subscribe.
         """
         self._subscribers.append(subscriber)
     
-    def unsubscribe(self, subscriber: LCMObserver):
+    def unsubscribe(self, subscriber: LCMObserver) -> None:
         """
-        Unsubscribes a subscriber from this observable.
+        Unsubscribe a subscriber from this observable.
+        
+        Args:
+            subscriber (LCMObserver): The subscriber to unsubscribe.
         """
         self._subscribers.remove(subscriber)
     
-    def start(self):
+    def start(self) -> None:
         """
-        Starts the LCM republisher asynchronously.
+        Start the LCM republisher asynchronously.
         """
-        self._thread.start()
+        self._daemon.start()
     
-    def stop(self):
+    def stop(self) -> None:
         """
-        Stops the LCM republisher.
+        Stop the LCM republisher.
         """
-        self._stopped = True
+        self._daemon.stop()
     
-    def _run(self):
+    def _handle(self, channel: str, data: bytes):
         """
-        Runs the LCM subscriber handler loop.
-        """
-        lc = lcm.LCM()
-        lc.subscribe(self._channel, self._handler)
-        self.logger.debug(f"LCM republisher subscribed to channel '{self._channel}'")
-        while not self._stopped:
-            lc.handle()
-    
-    def _handler(self, channel, data):
-        """
-        Handles an LCM event.
+        Handle an LCM event.
         
         Args:
-            channel: The LCM channel
-            data: The LCM data
+            channel (str): The LCM channel
+            data (bytes): The LCM data
         """
         for subscriber in self._subscribers:
             if subscriber.match(channel):
