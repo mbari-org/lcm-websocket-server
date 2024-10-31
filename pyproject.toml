@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lcm-websocket-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "WebSocket server for republishing LCM messages"
 authors = ["Kevin Barnard <kbarnard@mbari.org>"]
 license = "MIT"
