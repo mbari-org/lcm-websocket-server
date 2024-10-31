@@ -5,7 +5,7 @@ import argparse
 import asyncio
 from typing import List, Optional
 
-from lcmutils import LCMTypeRegistry
+from lcmutils import LCMType, LCMTypeRegistry
 
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
@@ -25,12 +25,33 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
     def __init__(self, lcm_type_registry: LCMTypeRegistry):
         self._lcm_type_registry = lcm_type_registry
     
+    def _decode(self, data: bytes) -> Optional[LCMType]:
+        """
+        Decode an LCM message.
+        
+        Args:
+            data: LCM message data
+        
+        Returns:
+            The decoded LCM message, or None if the message could not be decoded.
+        """
+        try:
+            message = self._lcm_type_registry.decode(data)
+            for slot in message.__slots__:
+                if isinstance(getattr(message, slot), bytes):
+                    # Attempt to decode bytes as another LCM message
+                    nested_message = self._decode(getattr(message, slot))
+                    if nested_message is not None:
+                        setattr(message, slot, nested_message)
+            return message
+        except Exception as e:
+            self.logger.debug(f"Failed to decode LCM data: {e}")
+            return None
+
     def handle(self, channel: str, data: bytes) -> Optional[str]:
         # Decode the LCM message
-        try:
-            event = self._lcm_type_registry.decode(data)
-        except Exception as e:
-            self.logger.debug(f"Failed to decode LCM event from channel {channel}: {e}")
+        event = self._decode(data)
+        if event is None:
             return None
         
         # Get fingerprint hex
