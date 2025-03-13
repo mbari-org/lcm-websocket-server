@@ -9,8 +9,8 @@ import argparse
 import asyncio
 
 import cv2
-from senlcm import image_t
-from stdlcm import header_t
+from compas_lcmtypes.senlcm import image_t
+from compas_lcmtypes.stdlcm import header_t
 from lcmlog.event import Header
 from lcmutils import LCMTypeRegistry
 
@@ -111,18 +111,15 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
     
     # Initialize the LCM type registry
     registry = LCMTypeRegistry()
-    molars_package_names = [
-        "stdlcm",
-        "navlcm",
-        "senlcm",
-        "geolcm",
+    package_names = [
+        "compas_lcmtypes",
         "lcm_action_server",
         "mission_server",
         "nav_server",
         "control_server",
     ]
-    logger.info(f"Discovering LCM types in MolaRS packages: {', '.join(molars_package_names)}")
-    for package_name in molars_package_names:
+    logger.info(f"Discovering LCM types in packages: {', '.join(package_names)}")
+    for package_name in package_names:
         try:
             registry.discover(package_name)
         except ModuleNotFoundError:

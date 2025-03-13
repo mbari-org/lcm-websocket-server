@@ -38,7 +38,7 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
             try:
                 image_event = image_t.decode(data)
             except Exception as e:
-                self.logger.debug(f"Failed to decode image_t event from channel {channel}: {e}")
+                self.logger.warning(f"Failed to decode image_t event from channel {channel}: {e}")
                 return None
 
         # Create a decoder
