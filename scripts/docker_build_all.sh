@@ -2,7 +2,7 @@
 
 # Build all of the docker images
 
-EXTS=( "compas-lcmtypes" "dial" )
+EXTS=( "dial" )
 
 ./scripts/docker_build.sh
 

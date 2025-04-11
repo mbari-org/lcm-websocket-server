@@ -2,11 +2,11 @@ ARG VERSION=latest
 FROM mbari/lcm-websocket-server:$VERSION
 
 # Install lcm-websocket-server with the image extra
-RUN pip install $(ls /tmp/*.whl | head -n 1)[image]
+RUN pip install --no-cache-dir $(ls /tmp/*.whl | head -n 1)[image]
 
 # Install the molars-lcmtypes wheel from the host
 COPY molars_lcmtypes-0.0.0-py3-none-any.whl /tmp/molars_lcmtypes-0.0.0-py3-none-any.whl
-RUN pip install /tmp/molars_lcmtypes-0.0.0-py3-none-any.whl
+RUN pip install --no-cache-dir /tmp/molars_lcmtypes-0.0.0-py3-none-any.whl
 
 ENV JPEG_QUALITY=75
 ENV JPEG_SCALE=1.0

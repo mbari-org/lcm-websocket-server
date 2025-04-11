@@ -2,7 +2,7 @@
 
 # Push all of the docker images
 
-EXTS=( "compas-lcmtypes" "dial" )
+EXTS=( "dial" )
 
 ./scripts/docker_push.sh
 

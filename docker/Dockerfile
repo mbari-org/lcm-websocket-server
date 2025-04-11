@@ -1,4 +1,4 @@
-FROM python:3.10-slim-buster AS builder
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install dependencies
@@ -7,17 +7,14 @@ RUN apt update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip install --no-cache-dir poetry
-
 # Copy app into container
 COPY . /app
 WORKDIR /app
 
 # Build lcm_websocket_server*.whl
-RUN poetry build
+RUN uv build
 
-FROM python:3.10-slim-buster
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 # Copy glib-2.0 shared libraries
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0 /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0

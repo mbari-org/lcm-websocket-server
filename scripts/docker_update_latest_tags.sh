@@ -1,6 +1,6 @@
 VERSION=$(grep '^version =' pyproject.toml | awk -F'"' '{print $2}')
 
-EXTS=( "compas-lcmtypes" "dial" )
+EXTS=( "dial" )
 
 docker tag mbari/lcm-websocket-server:$VERSION mbari/lcm-websocket-server:latest
 docker push mbari/lcm-websocket-server:latest
