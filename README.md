@@ -51,25 +51,9 @@ Then, the server can be run with:
 lcm-websocket-server compas_lcmtypes
 ```
 
-### JPEG Proxy
-
-The `lcm-websocket-jpeg-proxy` command can be used to run a server that republishes CoMPAS `senlcm::image_t` LCM messages as JPEG images over a WebSocket connection. The images are decoded from a variety of pixel formats and encoded as JPEG resolution as a configurable resolution and quality.
-
-See the [CoMPAS LCM types repository](https://bitbucket.org/compas-sw/compas_lcmtypes) for more information.
-
-**This command requires the `image` extension to be installed.** This can be done with:
-```bash
-pip install lcm-websocket-server[image]
-```
-
-To run the server locally on port 8766 and republish images for the `CAMERA` channel at 75% quality at 1.0 scale:
-```bash
-lcm-websocket-jpeg-proxy --host localhost --port 8766 --quality 75 --scale 1.0 --channel CAMERA
-```
-
 ### Dial Proxy
 
-The `lcm-websocket-dial-proxy` command is a combined version of the JSON and JPEG proxies, tweaked for [Dial](https://github.com/mbari-org/dial). It can be used to run a server that republishes CoMPAS `senlcm::image_t` LCM messages as JPEG images and all other CoMPAS LCM messages as JSON over a WebSocket connection. All text frames sent over the WebSocket connection are encoded as JSON. Binary frames are JPEG images with a prepended header and channel name that conforms to the [LCM log file format](http://lcm-proj.github.io/lcm/content/log-file-format.html) with the following considerations:
+The `lcm-websocket-dial-proxy` command is a version of the JSON proxy tweaked for [Dial](https://github.com/mbari-org/dial). It can be used to run a server that republishes CoMPAS `senlcm::image_t` LCM messages as JPEG images and all other CoMPAS LCM messages as JSON over a WebSocket connection. All text frames sent over the WebSocket connection are encoded as JSON. Binary frames are JPEG images with a prepended header and channel name that conforms to the [LCM log file format](http://lcm-proj.github.io/lcm/content/log-file-format.html) with the following considerations:
 - The *event number* is always 0. This is because the server is not reading from a log file, but rather republishing messages as they are received.
 - The *timestamp* is the timestamp from the `image_t` event's contained `header_t` timestamp. The timestamp is conventionally in units of microseconds, but this is not guaranteed.
 - The *data length* represents the original image data length, not the length of the JPEG image data.

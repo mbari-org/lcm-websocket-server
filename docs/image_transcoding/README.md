@@ -39,8 +39,12 @@ graph TD;
 
 This service will be implemented in Python using the following libraries:
 - [LCM](https://lcm-proj.github.io/lcm/)
-- [compas-lcmtypes](https://pypi.org/project/compas-lcmtypes/)
 - [OpenCV](https://docs.opencv.org/4.x/index.html)
 - [websockets](https://websockets.readthedocs.io/en/stable/index.html)
+- The [compas_lcmtypes](https://github.com/CoMPASLab/compas_lcmtypes) LCM type packages:
+	- `stdlcm`
+	- `senlcm`
+	- `navlcm`
+	- `geolcm`
 
-Messages will be [received](https://lcm-proj.github.io/lcm/python/index.html#lcm.LCM) via LCM and decoded according to the [`image_t` definition](https://bitbucket.org/compas-sw/compas_lcmtypes/src/main/senlcm_image_t.lcm). The contained image data will be decoded according to the specified pixel format then [encoded](https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html#ga5a0acefe5cbe0a81e904e452ec7ca733) into JPEG using OpenCV. The JPEG byte data will be [sent](https://websockets.readthedocs.io/en/stable/reference/asyncio/server.html#websockets.server.WebSocketServerProtocol.send) over WebSocket connections as a [Binary frame](https://www.rfc-editor.org/rfc/rfc6455.html#section-5.6).
+Messages will be [received](https://lcm-proj.github.io/lcm/python/index.html#lcm.LCM) via LCM and decoded according to the [`image_t` definition](https://github.com/CoMPASLab/compas_lcmtypes/blob/main/senlcm_image_t.lcm). The contained image data will be decoded according to the specified pixel format then [encoded](https://docs.opencv.org/4.x/d4/da8/group__imgcodecs.html#ga5a0acefe5cbe0a81e904e452ec7ca733) into JPEG using OpenCV. The JPEG byte data will be [sent](https://websockets.readthedocs.io/en/stable/reference/asyncio/server.html#websockets.server.WebSocketServerProtocol.send) over WebSocket connections as a [Binary frame](https://www.rfc-editor.org/rfc/rfc6455.html#section-5.6).
