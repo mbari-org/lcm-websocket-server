@@ -5,6 +5,7 @@ docker/
 .gitignore
 
 poetry.lock
+uv.lock
 dist/
 scripts/
 
