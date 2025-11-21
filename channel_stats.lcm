@@ -1,0 +1,15 @@
+struct channel_stats {
+    string channel;
+    string type;
+    int32_t num_msgs;
+    float hz;
+    float inv_hz;
+    float jitter;
+    float bandwidth;
+    int32_t undecodable;
+}
+
+struct channel_stats_list {
+    int32_t num_channels;
+    channel_stats channels[num_channels];
+}

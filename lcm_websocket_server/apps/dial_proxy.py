@@ -2,23 +2,23 @@
 LCM WebSocket Proxy Server for the Dial visualization webapp.
 """
 
+import argparse
+import asyncio
 from io import BytesIO
 from typing import Optional, Union
 
-import argparse
-import asyncio
-
-from numpy import ndarray
-
 import cv2
-from lcm_websocket_server.lib.handler import LCMWebSocketHandler
-from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, UnsupportedPixelFormatError, get_decoder
+from numpy import ndarray
 from lcmlog.event import Header
 from lcmutils import LCMTypeRegistry
 from senlcm import image_t
 from stdlcm import header_t
 
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
+from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy
+from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats, channel_stats_list
+from lcm_websocket_server.lib.handler import LCMWebSocketHandler
+from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, UnsupportedPixelFormatError, get_decoder
 from lcm_websocket_server.lib.log import LogMixin
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.apps.json_proxy import JSONHandler
@@ -191,10 +191,21 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
             registry.discover(package_name)
         except ModuleNotFoundError:
             logger.error(f"Could not discover types in MolaRS package '{package_name}'")
+    
+    # Register the channel_stats LCM types for the virtual spy channel
+    registry.register(channel_stats)
+    registry.register(channel_stats_list)
+    logger.info(f"Registered virtual channel stats types: {channel_stats.__name__}, {channel_stats_list.__name__}")
+    
     if not registry.types:
         logger.critical("No LCM types discovered, exiting.")
         return
     logger.info(f"Discovered LCM types: {', '.join([t.__name__ for t in registry.types])}")
+
+    # Initialize the LCM spy to track channel statistics
+    # The spy will publish stats at 1 Hz on the virtual channel "LWS_LCM_SPY"
+    spy = LCMSpy(registry, lcm_republisher, channel_regex=channel)
+    logger.info(f"Initialized LCM spy - stats available on virtual channel '{LCMSpy.VIRTUAL_CHANNEL}'")
 
     # Create an image encoder
     quality = round(max(0, min(quality, 100)))

@@ -104,6 +104,19 @@ class LCMRepublisher(LogMixin):
         """
         self._daemon.stop()
     
+    def inject(self, channel: str, data: bytes) -> None:
+        """
+        Inject a virtual message into the republisher (not from LCM).
+        
+        This is useful for creating "virtual channels" that don't come from LCM
+        but should be distributed to subscribers as if they were.
+        
+        Args:
+            channel (str): The virtual channel name
+            data (bytes): The message data
+        """
+        self._handle(channel, data)
+    
     def _handle(self, channel: str, data: bytes):
         """
         Handle an LCM event.
