@@ -50,7 +50,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
             self.logger.debug(f"Failed to decode LCM data: {e}")
             return None
 
-    def handle(self, channel: str, data: bytes) -> Optional[str]:
+    async def handle(self, channel: str, data: bytes) -> Optional[str]:
         # Decode the LCM message
         event = self._decode(data)
         if event is None:

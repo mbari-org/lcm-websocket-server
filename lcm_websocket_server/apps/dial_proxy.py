@@ -106,7 +106,7 @@ class DialHandler(LogMixin):
         self._image_handler = image_handler
         self._json_handler = json_handler
     
-    def _encode_image_t(self, channel: str, data: bytes) -> Optional[bytes]:
+    async def _encode_image_t(self, channel: str, data: bytes) -> Optional[bytes]:
         """
         Encode an image_t message as a binary frame.
         
@@ -122,7 +122,7 @@ class DialHandler(LogMixin):
         payload_header: header_t = image_event.header
         
         # Encode the image as JPEG
-        jpeg_bytes = self._image_handler.handle(channel, image_event)
+        jpeg_bytes = await self._image_handler.handle(channel, image_event)
         if jpeg_bytes is None:
             return None
         
@@ -145,14 +145,14 @@ class DialHandler(LogMixin):
         
         return frame
     
-    def handle(self, channel: str, data: bytes) -> Optional[Union[bytes, str]]:
+    async def handle(self, channel: str, data: bytes) -> Optional[Union[bytes, str]]:
         # Check if the message is an image_t message and encode the response
         response = None
         fingerprint = data[:8]
         if fingerprint == DialHandler.IMAGE_T_FINGERPRINT:
-            response = self._encode_image_t(channel, data)
+            response = await self._encode_image_t(channel, data)
         else:
-            response = self._json_handler.handle(channel, data)
+            response = await self._json_handler.handle(channel, data)
         
         return response
 

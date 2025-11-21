@@ -8,7 +8,7 @@ class LCMWebSocketHandler(ABC):
     """
     
     @abstractmethod
-    def handle(self, channel: str, data: bytes) -> Optional[Union[str, bytes, bytearray, memoryview]]:
+    async def handle(self, channel: str, data: bytes) -> Optional[Union[str, bytes, bytearray, memoryview]]:
         """
         Handle an LCM message.
         
