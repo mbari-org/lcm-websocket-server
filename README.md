@@ -77,6 +77,48 @@ The Dial proxy depends on the `molars-lcmtypes` Python package to be installed. 
 
 The `Dockerfile.dial` file can be used to build the image with the `molars-lcmtypes` package installed. For this, the Python wheel `molars_lcmtypes-0.0.0-py3-none-any.whl` must be placed at the repository root before building the image.
 
+## :bar_chart: LCM Spy Virtual Channel
+
+The server automatically provides a **virtual channel** called `LWS_LCM_SPY` that publishes per-channel statistics at 1 Hz. This allows clients to monitor LCM network activity without affecting the actual LCM traffic.
+
+### Channel Statistics
+
+The virtual channel publishes a `channel_stats_list` message containing statistics for each active channel:
+- **Hz**: Message frequency
+- **Bandwidth**: Bytes per second
+- **Jitter**: Variation in message intervals
+- **Message count**: Total messages received
+- **Undecodable count**: Messages that couldn't be decoded
+
+### Subscribing to Stats
+
+Connect to the spy channel using the channel name in the WebSocket path:
+
+```javascript
+// Subscribe to spy stats only
+const ws = new WebSocket('ws://localhost:8765/LWS_LCM_SPY');
+
+ws.onmessage = (ev) => {
+    const stats = JSON.parse(ev.event);
+    console.log('Channel stats:', stats.channels);
+};
+```
+
+Or subscribe to all channels including the spy:
+
+```javascript
+// Subscribe to all channels (real + virtual)
+const ws = new WebSocket('ws://localhost:8765/.*');
+```
+
+### Example Client
+
+A Python example client is provided in `examples/spy_client.py`:
+
+```bash
+python examples/spy_client.py --host localhost --port 8765
+```
+
 ## :whale: Docker
 
 ### Build
