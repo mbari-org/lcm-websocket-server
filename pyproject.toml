@@ -1,6 +1,6 @@
 [project]
 name = "lcm-websocket-server"
-version = "0.7.0"
+version = "0.7.1"
 description = "WebSocket server for republishing LCM messages"
 authors = [
     {name = "Kevin Barnard", email = "kbarnard@mbari.org"}
