@@ -23,7 +23,7 @@ class ChannelData:
         self._undecodable: int = 0
 
         self._hz = 0.0
-        self._hz_min_interval: float = float('inf')  # Start with infinity for min
+        self._hz_min_interval: float = 9999.0
         self._hz_max_interval: float = 0.0
         self._hz_bytes: int = 0
         self._hz_last_timestamp: int = 0
@@ -70,11 +70,11 @@ class ChannelData:
         self._hz = diff_recv / (dt / 1e9) if dt > 0 else 0.0
         
         # Store interval stats (convert from nanoseconds to seconds)
-        self._min_interval = self._hz_min_interval / 1e9 if self._hz_min_interval != float('inf') else None
+        self._min_interval = self._hz_min_interval / 1e9 if self._hz_min_interval != 9999.0 else None
         self._max_interval = self._hz_max_interval / 1e9
         
         # Reset for next period
-        self._hz_min_interval = float('inf')
+        self._hz_min_interval = 9999.0
         self._hz_max_interval = 0.0
         
         self._bandwidth = self._hz_bytes / (dt / 1e9) if dt > 0 else 0.0
@@ -92,7 +92,7 @@ class ChannelData:
         stats.type = self._last_type or ""
         stats.num_msgs = self._num_msgs
         stats.hz = self._hz
-        stats.inv_hz = 1.0 / self._hz if self._hz > 0 else float('inf')
+        stats.inv_hz = 1.0 / self._hz if self._hz > 0 else 9999.0
         # Jitter is already in seconds (converted in update_hz_data)
         if self._min_interval is not None and self._max_interval is not None:
             stats.jitter = self._max_interval - self._min_interval
