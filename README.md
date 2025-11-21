@@ -24,8 +24,9 @@ pip install dist/lcm_websocket_server-*-py3-none-any.whl
 > [!TIP]
 > The `lcm-websocket-server` commands have a log level of `ERROR` by default. To see more detailed logs, use the `-v` flag. Repeated use of the flag increases the verbosity from `ERROR` to `WARNING`, `INFO`, and `DEBUG`.
 
+### Running the Server
 
-### JSON Proxy
+#### JSON Proxy
 
 The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection. 
 
@@ -39,7 +40,7 @@ lcm-websocket-json-proxy --host localhost --port 8765 --channel '.*' your_lcm_ty
 
 The `lcm_packages` argument is the name of the package (or comma-separated list of packages) that contains the LCM Python message definitions. Submodules are scanned recursively and registered so they can be automatically identified, decoded, and republished. 
 
-### Example: `compas_lcmtypes`
+**Example: `compas_lcmtypes`**
 
 For example, the `compas_lcmtypes` package contains LCM types for the CoMPAS lab. These can be installed with:
 ```bash
@@ -48,10 +49,10 @@ pip install compas-lcmtypes==0.1.0
 
 Then, the server can be run with:
 ```bash
-lcm-websocket-server compas_lcmtypes
+lcm-websocket-json-proxy compas_lcmtypes
 ```
 
-### Dial Proxy
+#### Dial Proxy
 
 The `lcm-websocket-dial-proxy` command is a version of the JSON proxy tweaked for [Dial](https://github.com/mbari-org/dial). It can be used to run a server that republishes CoMPAS `senlcm::image_t` LCM messages as JPEG images and all other CoMPAS LCM messages as JSON over a WebSocket connection. All text frames sent over the WebSocket connection are encoded as JSON. Binary frames are JPEG images with a prepended header and channel name that conforms to the [LCM log file format](http://lcm-proj.github.io/lcm/content/log-file-format.html) with the following considerations:
 - The *event number* is always 0. This is because the server is not reading from a log file, but rather republishing messages as they are received.
@@ -76,6 +77,27 @@ lcm-websocket-dial-proxy --host localhost --port 8765 --channel '.*' --quality 7
 The Dial proxy depends on the `molars-lcmtypes` Python package to be installed. This package is not available on PyPI, so it must be built and installed manually; see the [MolaRS repository](https://github.com/CoMPASLab/molars/) for more info. 
 
 The `Dockerfile.dial` file can be used to build the image with the `molars-lcmtypes` package installed. For this, the Python wheel `molars_lcmtypes-0.0.0-py3-none-any.whl` must be placed at the repository root before building the image.
+
+### Connecting to the Server
+
+Clients can connect to the server using a WebSocket connection. The channel(s) to subscribe to are specified in the WebSocket path as a regular expression. For example, to subscribe to all channels:
+```javascript
+const ws = new WebSocket('ws://localhost:8765/.*');
+```
+
+To subscribe to a specific channel, such as `EXAMPLE_CHANNEL`:
+```javascript
+const ws = new WebSocket('ws://localhost:8765/EXAMPLE_CHANNEL');
+```
+
+#### Update Interval
+
+Clients can specify an optional `update_interval_ms` query parameter in the WebSocket URL to control how often they receive messages. This is useful for clients that want to limit the rate of incoming messages. For example, to receive updates every 500 milliseconds:
+```javascript
+const ws = new WebSocket('ws://localhost:8765/.*?update_interval_ms=500');
+```
+
+This will cause the latest message for each subscribed channel to be sent to the client every 500 milliseconds.
 
 ## :bar_chart: LCM Spy Virtual Channel
 
