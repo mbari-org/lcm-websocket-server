@@ -39,6 +39,8 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
         """
         try:
             message = self._lcm_type_registry.decode(data)
+            if message is None:
+                return None
             for slot in message.__slots__:
                 if isinstance(getattr(message, slot), bytes):
                     # Attempt to decode bytes as another LCM message
