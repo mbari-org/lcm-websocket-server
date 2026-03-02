@@ -36,7 +36,7 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
     def __init__(self, encoder: MJPEGEncoder):
         self._encoder = encoder
     
-    def handle(self, channel: str, data: Union[bytes, image_t]) -> Optional[bytes]:
+    async def handle(self, channel: str, data: Union[bytes, image_t]) -> Optional[bytes]:
         # Check if the data is already an image_t. If so, use it directly
         if isinstance(data, image_t):
             image_event = data
