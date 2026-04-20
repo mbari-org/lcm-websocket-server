@@ -15,8 +15,13 @@ pip install lcm-websocket-server
 ### From source
 
 ```bash
-poetry build
-pip install dist/lcm_websocket_server-*-py3-none-any.whl
+pip install .
+```
+
+Or with the `image` extension:
+
+```bash
+pip install ".[image]"
 ```
 
 ## :rocket: Usage
@@ -38,7 +43,19 @@ To run the server locally on port 8765 and republish messages on all channels:
 lcm-websocket-json-proxy --host localhost --port 8765 --channel '.*' your_lcm_types_packages
 ```
 
-The `lcm_packages` argument is the name of the package (or comma-separated list of packages) that contains the LCM Python message definitions. Submodules are scanned recursively and registered so they can be automatically identified, decoded, and republished. 
+The `lcm_packages` argument is the name of the package (or comma-separated list of packages) that contains the LCM Python message definitions. Submodules are scanned recursively and registered so they can be automatically identified, decoded, and republished.
+
+#### Tuning Options
+
+Both proxy commands accept optional tuning flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--queue-size N` | 64 | Max messages buffered per connection before the oldest are dropped |
+| `--poll-interval S` | 0.1 | Sleep duration (seconds) when the message queue is empty |
+| `--spy-interval S` | 1.0 | LCM spy stats emission interval (seconds) |
+
+Increase `--queue-size` if you see drop warnings in the logs and your consumer can tolerate a larger backlog. Decrease `--poll-interval` for lower latency at the cost of slightly higher CPU use.
 
 **Example: `compas_lcmtypes`**
 
