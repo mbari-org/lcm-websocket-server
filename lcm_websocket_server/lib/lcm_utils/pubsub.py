@@ -4,6 +4,7 @@ LCM pub/sub utilities.
 
 import queue
 import re
+from time import monotonic_ns
 
 from lcmutils import LCMDaemon
 
@@ -56,6 +57,19 @@ class LCMObserver:
         Indicate that a formerly enqueued event (i.e., the last call to `LCMObserver.get`) is complete.
         """
         self._queue.task_done()
+
+
+class LCMTimedObserver(LCMObserver):
+    """
+    Observer variant that captures an arrival timestamp for each event.
+    """
+
+    def handle(self, event: tuple[str, bytes]) -> None:
+        channel, data = event
+        self._queue.put((channel, data, monotonic_ns()))
+
+    def get(self, *args, **kwargs) -> tuple[str, bytes, int]:
+        return self._queue.get(*args, **kwargs)
 
 
 class LCMRepublisher(LogMixin):

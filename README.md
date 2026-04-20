@@ -101,7 +101,7 @@ This will cause the latest message for each subscribed channel to be sent to the
 
 ## :bar_chart: LCM Spy Virtual Channel
 
-The server automatically provides a **virtual channel** called `LWS_LCM_SPY` that publishes per-channel statistics at 1 Hz. This allows clients to monitor LCM network activity without affecting the actual LCM traffic.
+The server provides a **virtual channel** called `LWS_LCM_SPY` that publishes per-channel statistics at 1 Hz on a per-connection basis. Each WebSocket client gets its own stats stream, computed from live traffic observed during that connection.
 
 ### Channel Statistics
 

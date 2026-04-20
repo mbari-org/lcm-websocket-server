@@ -2,6 +2,7 @@ struct channel_stats {
     string channel;
     string type;
     int32_t num_msgs;
+    int64_t latest_msg_timestamp_ns;
     float hz;
     float inv_hz;
     float jitter;

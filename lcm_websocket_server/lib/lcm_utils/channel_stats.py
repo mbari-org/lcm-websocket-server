@@ -10,16 +10,17 @@ except ImportError:
 import struct
 
 class channel_stats(object):
-    __slots__ = ["channel", "type", "num_msgs", "hz", "inv_hz", "jitter", "bandwidth", "undecodable"]
+    __slots__ = ["channel", "type", "num_msgs", "latest_msg_timestamp_ns", "hz", "inv_hz", "jitter", "bandwidth", "undecodable"]
 
-    __typenames__ = ["string", "string", "int32_t", "float", "float", "float", "float", "int32_t"]
+    __typenames__ = ["string", "string", "int32_t", "int64_t", "float", "float", "float", "float", "int32_t"]
 
-    __dimensions__ = [None, None, None, None, None, None, None, None]
+    __dimensions__ = [None, None, None, None, None, None, None, None, None]
 
     def __init__(self):
         self.channel = ""
         self.type = ""
         self.num_msgs = 0
+        self.latest_msg_timestamp_ns = 0
         self.hz = 0.0
         self.inv_hz = 0.0
         self.jitter = 0.0
@@ -41,7 +42,7 @@ class channel_stats(object):
         buf.write(struct.pack('>I', len(__type_encoded)+1))
         buf.write(__type_encoded)
         buf.write(b"\0")
-        buf.write(struct.pack(">iffffi", self.num_msgs, self.hz, self.inv_hz, self.jitter, self.bandwidth, self.undecodable))
+        buf.write(struct.pack(">iqffffi", self.num_msgs, self.latest_msg_timestamp_ns, self.hz, self.inv_hz, self.jitter, self.bandwidth, self.undecodable))
 
     def decode(data):
         if hasattr(data, 'read'):
@@ -59,13 +60,13 @@ class channel_stats(object):
         self.channel = buf.read(__channel_len)[:-1].decode('utf-8', 'replace')
         __type_len = struct.unpack('>I', buf.read(4))[0]
         self.type = buf.read(__type_len)[:-1].decode('utf-8', 'replace')
-        self.num_msgs, self.hz, self.inv_hz, self.jitter, self.bandwidth, self.undecodable = struct.unpack(">iffffi", buf.read(24))
+        self.num_msgs, self.latest_msg_timestamp_ns, self.hz, self.inv_hz, self.jitter, self.bandwidth, self.undecodable = struct.unpack(">iqffffi", buf.read(32))
         return self
     _decode_one = staticmethod(_decode_one)
 
     def _get_hash_recursive(parents):
         if channel_stats in parents: return 0
-        tmphash = (0x11e5904240800330) & 0xffffffffffffffff
+        tmphash = (0x67f6c58a9399501) & 0xffffffffffffffff
         tmphash  = (((tmphash<<1)&0xffffffffffffffff) + (tmphash>>63)) & 0xffffffffffffffff
         return tmphash
     _get_hash_recursive = staticmethod(_get_hash_recursive)
@@ -80,66 +81,4 @@ class channel_stats(object):
     def get_hash(self):
         """Get the LCM hash of the struct"""
         return struct.unpack(">Q", channel_stats._get_packed_fingerprint())[0]
-
-
-class channel_stats_list(object):
-    __slots__ = ["num_channels", "channels"]
-
-    __typenames__ = ["int32_t", "channel_stats"]
-
-    __dimensions__ = [None, ["num_channels"]]
-
-    def __init__(self):
-        self.num_channels = 0
-        self.channels = []
-
-    def encode(self):
-        buf = BytesIO()
-        buf.write(channel_stats_list._get_packed_fingerprint())
-        self._encode_one(buf)
-        return buf.getvalue()
-
-    def _encode_one(self, buf):
-        buf.write(struct.pack(">i", self.num_channels))
-        for i0 in range(self.num_channels):
-            assert self.channels[i0]._get_packed_fingerprint() == channel_stats._get_packed_fingerprint()
-            self.channels[i0]._encode_one(buf)
-
-    def decode(data):
-        if hasattr(data, 'read'):
-            buf = data
-        else:
-            buf = BytesIO(data)
-        if buf.read(8) != channel_stats_list._get_packed_fingerprint():
-            raise ValueError("Decode error")
-        return channel_stats_list._decode_one(buf)
-    decode = staticmethod(decode)
-
-    def _decode_one(buf):
-        self = channel_stats_list()
-        self.num_channels = struct.unpack(">i", buf.read(4))[0]
-        self.channels = []
-        for i0 in range(self.num_channels):
-            self.channels.append(channel_stats._decode_one(buf))
-        return self
-    _decode_one = staticmethod(_decode_one)
-
-    def _get_hash_recursive(parents):
-        if channel_stats_list in parents: return 0
-        newparents = parents + [channel_stats_list]
-        tmphash = (0x557ed5e44cc122a9+ channel_stats._get_hash_recursive(newparents)) & 0xffffffffffffffff
-        tmphash  = (((tmphash<<1)&0xffffffffffffffff) + (tmphash>>63)) & 0xffffffffffffffff
-        return tmphash
-    _get_hash_recursive = staticmethod(_get_hash_recursive)
-    _packed_fingerprint = None
-
-    def _get_packed_fingerprint():
-        if channel_stats_list._packed_fingerprint is None:
-            channel_stats_list._packed_fingerprint = struct.pack(">Q", channel_stats_list._get_hash_recursive([]))
-        return channel_stats_list._packed_fingerprint
-    _get_packed_fingerprint = staticmethod(_get_packed_fingerprint)
-
-    def get_hash(self):
-        """Get the LCM hash of the struct"""
-        return struct.unpack(">Q", channel_stats_list._get_packed_fingerprint())[0]
 

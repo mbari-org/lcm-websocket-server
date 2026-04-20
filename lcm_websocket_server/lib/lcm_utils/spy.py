@@ -1,10 +1,10 @@
-from threading import Thread
 from typing import Optional
-from time import sleep, time_ns
+from time import monotonic_ns, time_ns
 
-from lcmutils import LCMDaemon, LCMTypeRegistry
+from lcmutils import LCMTypeRegistry
 
-from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats, channel_stats_list
+from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
+from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
 
 
 
@@ -16,20 +16,21 @@ class ChannelData:
     def __init__(self):
         self._last_type: Optional[str] = None
         self._num_msgs: int = 0
-        self._last_timestamp: Optional[int] = None
         self._min_interval: Optional[float] = None
         self._max_interval: Optional[float] = None
         self._bandwidth: float = 0.0
         self._undecodable: int = 0
 
         self._hz = 0.0
-        self._hz_min_interval: float = 9999.0
+        self._hz_min_interval: float = float("inf")
         self._hz_max_interval: float = 0.0
         self._hz_bytes: int = 0
-        self._hz_last_timestamp: int = 0
+        self._hz_last_update_timestamp: int = monotonic_ns()
+        self._last_msg_timestamp: Optional[int] = None
+        self._latest_msg_timestamp_ns: int = 0
         self._hz_last_nreceived: int = 0
 
-    def message_received(self, lcm_type: str, len_data: int, decoded: bool) -> None:
+    def message_received(self, lcm_type: str, len_data: int, decoded: bool, timestamp_ns: Optional[int] = None) -> None:
         """
         Handle a received message of a given type.
 
@@ -37,22 +38,21 @@ class ChannelData:
             lcm_type (str): The string representation of the LCM type.
             len_data (int): The length of the data in bytes.
             decoded (bool): Whether the message was decoded successfully.
+            timestamp_ns (Optional[int]): Arrival timestamp in nanoseconds.
         """
         self._num_msgs += 1
         self._last_type = lcm_type
-        timestamp = time_ns()
-        self._last_timestamp = timestamp
+        timestamp = timestamp_ns if timestamp_ns is not None else monotonic_ns()
+        self._latest_msg_timestamp_ns = time_ns()
         if not decoded:
             self._undecodable += 1
 
-        # Calculate interval from last message (skip first message)
-        if self._hz_last_timestamp > 0:
-            interval = timestamp - self._hz_last_timestamp
+        # Track inter-message timing for jitter using consecutive message deltas.
+        if self._last_msg_timestamp is not None:
+            interval = timestamp - self._last_msg_timestamp
             self._hz_min_interval = min(self._hz_min_interval, interval)
             self._hz_max_interval = max(self._hz_max_interval, interval)
-        else:
-            # First message - initialize the timestamp
-            self._hz_last_timestamp = timestamp
+        self._last_msg_timestamp = timestamp
         
         self._hz_bytes += len_data
 
@@ -65,16 +65,20 @@ class ChannelData:
         """
         diff_recv = self._num_msgs - self._hz_last_nreceived
         self._hz_last_nreceived = self._num_msgs
-        dt = timestamp - self._hz_last_timestamp
-        self._hz_last_timestamp = timestamp
+        dt = timestamp - self._hz_last_update_timestamp
+        self._hz_last_update_timestamp = timestamp
         self._hz = diff_recv / (dt / 1e9) if dt > 0 else 0.0
         
         # Store interval stats (convert from nanoseconds to seconds)
-        self._min_interval = self._hz_min_interval / 1e9 if self._hz_min_interval != 9999.0 else None
-        self._max_interval = self._hz_max_interval / 1e9
+        if self._hz_min_interval != float("inf") and self._hz_max_interval > 0.0:
+            self._min_interval = self._hz_min_interval / 1e9
+            self._max_interval = self._hz_max_interval / 1e9
+        else:
+            self._min_interval = None
+            self._max_interval = None
         
         # Reset for next period
-        self._hz_min_interval = 9999.0
+        self._hz_min_interval = float("inf")
         self._hz_max_interval = 0.0
         
         self._bandwidth = self._hz_bytes / (dt / 1e9) if dt > 0 else 0.0
@@ -91,6 +95,7 @@ class ChannelData:
         stats.channel = channel
         stats.type = self._last_type or ""
         stats.num_msgs = self._num_msgs
+        stats.latest_msg_timestamp_ns = self._latest_msg_timestamp_ns
         stats.hz = self._hz
         stats.inv_hz = 1.0 / self._hz if self._hz > 0 else 9999.0
         # Jitter is already in seconds (converted in update_hz_data)
@@ -105,42 +110,41 @@ class ChannelData:
 
 class LCMSpy:
     """
-    Subscribes to all LCM channels and maintains per-channel lcm-spy stats.
-    Publishes stats at 1 Hz on the virtual channel "LWS_LCM_SPY".
+    Per-connection lcm-spy stats accumulator.
+
+    Call `handle()` for each observed LCM event and `maybe_get_stats_bytes()`
+    periodically to emit the virtual `LWS_LCM_SPY` payload at a fixed cadence.
     """
 
     VIRTUAL_CHANNEL = "LWS_LCM_SPY"
 
-    def __init__(self, registry: LCMTypeRegistry, republisher, channel_regex: str = ".*"):
+    def __init__(self, registry: LCMTypeRegistry):
         """
         Args:
             registry (LCMTypeRegistry): Registry for detecting LCM types
-            republisher (LCMRepublisher): Republisher to inject virtual channel stats into
-            channel_regex (str): Channel regex to monitor (default: ".*" for all channels)
         """
         self._registry = registry
-        self._republisher = republisher
-        self._channel_data: dict[str, ChannelData] = {}  # Maps channel names to ChannelData objects
-        
-        # Start the background thread for periodic stats updates
-        self._hz_thread = Thread(target=self._hz_loop, daemon=True)
-        self._hz_thread.start()
-        
-        # Subscribe to LCM channels and start the daemon
-        self._daemon = LCMDaemon()
-        self._daemon.subscribe(channel_regex)(self.handle)
-        self._daemon.start()
+        self._channel_data: dict[str, ChannelData] = {}
+        self._last_emit_ts_ns = monotonic_ns()
 
-    def handle(self, channel: str, data: bytes) -> None:
+    def handle(self, channel: str, data: bytes, timestamp_ns: Optional[int] = None) -> None:
         """
         Handle an LCM event and maintain per-channel lcm-spy stats.
         """
+        if channel == self.VIRTUAL_CHANNEL:
+            return
+
         if channel not in self._channel_data:
             self._channel_data[channel] = ChannelData()
         
         lcm_type = self._registry.detect(data)
         lcm_type_name = lcm_type.__name__ if lcm_type is not None else data[:8].hex()
-        self._channel_data[channel].message_received(lcm_type_name, len(data), lcm_type is not None)
+        self._channel_data[channel].message_received(
+            lcm_type_name,
+            len(data),
+            lcm_type is not None,
+            timestamp_ns=timestamp_ns,
+        )
 
     def get_stats(self) -> channel_stats_list:
         """
@@ -150,23 +154,29 @@ class LCMSpy:
             channel_stats_list: A list of channel_stats objects for each channel.
         """
         stats_list = channel_stats_list()
-        for channel, data in self._channel_data.items():
+        for channel in sorted(self._channel_data):
+            data = self._channel_data[channel]
             stats_list.channels.append(data.report(channel))
         stats_list.num_channels = len(stats_list.channels)
         return stats_list
 
-    def _hz_loop(self) -> None:
+    def maybe_get_stats_bytes(self, interval_ns: int = 1_000_000_000) -> Optional[bytes]:
         """
-        Periodically update the Hz data for each channel and inject stats into the republisher.
-        Publishes at 1 Hz on the virtual channel "LWS_LCM_SPY".
-        """
-        while True:
-            sleep(1)  # Sleep for 1 second
-            
-            timestamp = time_ns()
-            for data in self._channel_data.values():
-                data.update_hz_data(timestamp)
+        Update internal rates and emit encoded stats if the interval has elapsed.
 
-            # Compute and inject the stats as a virtual channel
-            stats_list = self.get_stats()
-            self._republisher.inject(self.VIRTUAL_CHANNEL, stats_list.encode())
+        Args:
+            interval_ns (int): Emission interval in nanoseconds. Default is 1 second.
+
+        Returns:
+            Optional[bytes]: Encoded `channel_stats_list` payload when due, else None.
+        """
+        timestamp = monotonic_ns()
+        if timestamp - self._last_emit_ts_ns < interval_ns:
+            return None
+
+        self._last_emit_ts_ns = timestamp
+        for data in self._channel_data.values():
+            data.update_hz_data(timestamp)
+
+        stats_list = self.get_stats()
+        return stats_list.encode()

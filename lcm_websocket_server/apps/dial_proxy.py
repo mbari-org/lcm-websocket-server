@@ -15,8 +15,8 @@ from senlcm import image_t
 from stdlcm import header_t
 
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
-from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy
-from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats, channel_stats_list
+from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
+from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, UnsupportedPixelFormatError, get_decoder
 from lcm_websocket_server.lib.log import LogMixin
@@ -202,11 +202,6 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
         return
     logger.info(f"Discovered LCM types: {', '.join([t.__name__ for t in registry.types])}")
 
-    # Initialize the LCM spy to track channel statistics
-    # The spy will publish stats at 1 Hz on the virtual channel "LWS_LCM_SPY"
-    spy = LCMSpy(registry, lcm_republisher, channel_regex=channel)
-    logger.info(f"Initialized LCM spy - stats available on virtual channel '{LCMSpy.VIRTUAL_CHANNEL}'")
-
     # Create an image encoder
     quality = round(max(0, min(quality, 100)))
     jpeg_encoder = DownsamplingMJPEGEncoder(scale=scale, params=[cv2.IMWRITE_JPEG_QUALITY, quality])
@@ -217,7 +212,7 @@ async def run(host: str, port: int, channel: str, scale: float = 1.0, quality: i
 
     # Create an LCM WebSocket server
     handler = DialHandler(image_handler, json_handler)
-    server = LCMWebSocketServer(host, port, handler, lcm_republisher)
+    server = LCMWebSocketServer(host, port, handler, lcm_republisher, spy_registry=registry)
 
     # Start the server
     logger.debug("Starting LCM WebSocket server")

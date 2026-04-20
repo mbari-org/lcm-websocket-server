@@ -10,8 +10,8 @@ from lcmutils import LCMType, LCMTypeRegistry
 from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
-from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy
-from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats, channel_stats_list
+from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
+from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
 from lcm_websocket_server.lib.lcm_utils.types import encode_event_json
 from lcm_websocket_server.lib.log import LogMixin, get_logger, set_stream_handler_verbosity
 
@@ -99,14 +99,9 @@ async def run(host: str, port: int, channel: str, lcm_packages: List[str]):
         return
     logger.info(f"Discovered LCM types: {', '.join([t.__name__ for t in registry.types])}")
 
-    # Initialize the LCM spy to track channel statistics
-    # The spy will publish stats at 1 Hz on the virtual channel "LWS_LCM_SPY"
-    spy = LCMSpy(registry, lcm_republisher, channel_regex=channel)
-    logger.info(f"Initialized LCM spy - stats available on virtual channel '{LCMSpy.VIRTUAL_CHANNEL}'")
-
     # Create an LCM WebSocket server
     handler = JSONHandler(registry)
-    server = LCMWebSocketServer(host, port, handler, lcm_republisher)
+    server = LCMWebSocketServer(host, port, handler, lcm_republisher, spy_registry=registry)
 
     # Start the server
     logger.debug("Starting LCM WebSocket server")
