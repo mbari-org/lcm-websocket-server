@@ -7,7 +7,7 @@ authors = [
 ]
 license = {text = "MIT"}
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 dependencies = [
     "websockets>=16.0",
     "lcmlog-py>=0.1.0",
@@ -19,6 +19,12 @@ dependencies = [
 image = [
     "numpy>=1.26.4",
     "opencv-python-headless>=4.9.0.80",
+]
+orjson = [
+    "orjson>=3.10",
+]
+uvloop = [
+    "uvloop>=0.21",
 ]
 
 [project.scripts]
@@ -38,8 +44,10 @@ dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "ruff>=0.8",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"

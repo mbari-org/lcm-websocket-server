@@ -1,4 +1,3 @@
 poetry.lock
-uv.lock
 dist/
 *__pycache__/
