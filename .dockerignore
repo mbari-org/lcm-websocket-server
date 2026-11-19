@@ -1,13 +1,10 @@
 .dockerignore
-docker/
 
 .git
 .gitignore
 
 poetry.lock
-uv.lock
 dist/
-scripts/
 
 *__pycache__/
 .venv/
