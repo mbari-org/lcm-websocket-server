@@ -311,10 +311,10 @@ HTML_TEMPLATE = """<!doctype html>
 
     function queueRender() {
       if (renderQueued) return;
-      
+
       const now = performance.now();
       const timeSinceLastRender = now - lastRenderTime;
-      
+
       if (timeSinceLastRender < RENDER_THROTTLE_MS) {
         // Schedule render for later
         renderQueued = true;

@@ -16,11 +16,11 @@ STREAM_HANDLER.setLevel(logging.INFO)
 def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     """
     Get a logger. By default, the logger is attached to a StreamHandler with a predefined formatter for consistency.
-    
+
     Args:
         name: Logger name.
         level: Logging level.
-    
+
     Returns:
         Logger.
     """
@@ -34,7 +34,7 @@ def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
 def set_stream_handler_level(level: int):
     """
     Set the logging level of the stream handler.
-    
+
     Args:
         level: Logging level.
     """
@@ -44,12 +44,12 @@ def set_stream_handler_level(level: int):
 def set_stream_handler_verbosity(verbosity: int):
     """
     Set the verbosity of the stream handler.
-    
+
     - 0 = ERROR
     - 1 = WARNING
     - 2 = INFO
     - 3 = DEBUG
-    
+
     Args:
         verbosity: Verbosity level.
     """
@@ -59,7 +59,7 @@ class LogMixin:
     """
     Logging mixin.
     """
-    
+
     @property
     def logger(self) -> logging.Logger:
         """

@@ -3,7 +3,13 @@ Shared fixtures for the lcm-websocket-server test suite.
 
 All LCM interaction uses LCMRepublisher.inject() which bypasses the UDP
 multicast network entirely, so no LCM daemon or network is required.
+LCM instances use the in-process memq provider so tests also work on hosts
+without a multicast route (e.g. CI runners); subprocesses inherit it.
 """
+
+import os
+
+os.environ.setdefault("LCM_DEFAULT_URL", "memq://")
 
 import asyncio
 import socket

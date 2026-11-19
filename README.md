@@ -43,7 +43,7 @@ The tests need the CoMPAS LCM Python types (`stdlcm`, `senlcm`, ...) on `PYTHONP
 
 #### JSON Proxy
 
-The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection. 
+The `lcm-websocket-json-proxy` command can be used to run a server that republishes LCM messages as JSON over a WebSocket connection.
 
 > [!NOTE]
 > The `lcm-websocket-server` command has been renamed to `lcm-websocket-json-proxy`. The old name is still available for backwards compatibility, but it is recommended to use the new name.
@@ -116,7 +116,7 @@ To run the server locally on port 8765 and republish messages on all channels (J
 lcm-websocket-dial-proxy --host localhost --port 8765 --channel '.*' --quality 75 --scale 1.0
 ```
 
-The Dial proxy depends on the `molars-lcmtypes` Python package to be installed. This package is not available on PyPI, so it must be built and installed manually; see the [MolaRS repository](https://github.com/CoMPASLab/molars/) for more info. 
+The Dial proxy depends on the `molars-lcmtypes` Python package to be installed. This package is not available on PyPI, so it must be built and installed manually; see the [MolaRS repository](https://github.com/CoMPASLab/molars/) for more info.
 
 The `Dockerfile.dial` file can be used to build the image with the `molars-lcmtypes` package installed. For this, the Python wheel `molars_lcmtypes-0.0.0-py3-none-any.whl` must be placed at the repository root before building the image.
 
