@@ -10,8 +10,6 @@ from time import monotonic_ns
 import cv2
 from lcmlog.event import Header
 from numpy import ndarray
-from senlcm import image_t
-from stdlcm import header_t
 
 from lcm_websocket_server.apps.json_proxy import JSONHandler
 from lcm_websocket_server.lib.cli import (
@@ -31,6 +29,7 @@ from lcm_websocket_server.lib.image import (
     get_decoder,
 )
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
+from lcm_websocket_server.lib.lcm_utils.types import find_lcm_type
 from lcm_websocket_server.lib.log import LogMixin, get_logger
 from lcm_websocket_server.lib.server import DEFAULT_HEAVY_WORKERS, LCMWebSocketServer
 
@@ -39,14 +38,20 @@ logger = get_logger("lcm-websocket-dial-proxy")
 
 class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
     """
-    Handler that converts image_t LCM messages to JPEG.
+    Handler that converts image LCM messages (senlcm.image_t layout) to JPEG.
 
     Decoder instances are cached by (pixelformat, width, height) so a new
     object is not allocated on every frame.
     """
 
-    def __init__(self, encoder: MJPEGEncoder):
+    def __init__(self, encoder: MJPEGEncoder, image_type: type):
+        """
+        Args:
+            encoder: JPEG encoder.
+            image_type: The LCM image class (e.g. compas_lcmtypes.senlcm.image_t).
+        """
         self._encoder = encoder
+        self.image_type = image_type
         self._decoder_cache: dict[tuple, object] = {}
 
     def _get_decoder(self, pixelformat: int, width: int, height: int):
@@ -62,13 +67,13 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
     def is_heavy(self, channel: str, data: bytes) -> bool:
         return True
 
-    def handle(self, channel: str, data: bytes | image_t) -> bytes | None:
-        # Accept either raw bytes or a pre-decoded image_t object.
-        if isinstance(data, image_t):
+    def handle(self, channel: str, data) -> bytes | None:
+        # Accept either raw bytes or a pre-decoded image object.
+        if isinstance(data, self.image_type):
             image_event = data
         else:
             try:
-                image_event = image_t.decode(data)
+                image_event = self.image_type.decode(data)
             except Exception as e:  # noqa: BLE001 - malformed input must not propagate
                 self.logger.warning(f"Failed to decode image_t event from channel {channel}: {e}")
                 return None
@@ -125,8 +130,6 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
     The JSON handler generates UTF-8 JSON from the LCM message, and sends the result as a text frame over the WebSocket.
     """
 
-    IMAGE_T_FINGERPRINT = image_t._get_packed_fingerprint()
-
     def __init__(
         self,
         image_handler: ImageMessageToJPEGHandler,
@@ -144,6 +147,7 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
             raise ValueError("max_image_fps must be positive")
         self._image_handler = image_handler
         self._json_handler = json_handler
+        self._image_fingerprint = image_handler.image_type._get_packed_fingerprint()
         self._image_interval_ns = int(1e9 / max_image_fps) if max_image_fps else 0
         self._next_image_ns: dict[str, int] = {}
         self._rate_lock = threading.Lock()
@@ -177,8 +181,8 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
             The encoded binary frame, or None if the message could not be encoded.
         """
         # Decode the image_t to get the payload header timestamp.
-        image_event = image_t.decode(data)
-        payload_header: header_t = image_event.header
+        image_event = self._image_handler.image_type.decode(data)
+        payload_header = image_event.header
 
         # Encode the image as JPEG (pass pre-decoded object to skip a second decode).
         jpeg_bytes = self._image_handler.handle(channel, image_event)
@@ -201,26 +205,19 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
         return header_bytes + channel_name_utf8 + jpeg_bytes
 
     def is_heavy(self, channel: str, data: bytes) -> bool:
-        return data[:8] == DialHandler.IMAGE_T_FINGERPRINT
+        return data[:8] == self._image_fingerprint
 
     def handle(self, channel: str, data: bytes) -> bytes | str | None:
-        if data[:8] == DialHandler.IMAGE_T_FINGERPRINT:
+        if data[:8] == self._image_fingerprint:
             if not self._image_due(channel, monotonic_ns()):
                 return None
             return self._encode_image_t(channel, data)
         return self._json_handler.handle(channel, data)
 
 
-DIAL_LCM_PACKAGES = (
-    "stdlcm",
-    "senlcm",
-    "navlcm",
-    "geolcm",
-    "lcm_action_server",
-    "mission_server",
-    "nav_server",
-    "control_server",
-)
+# LCM packages discovered by default (MOLARS types plus the CoMPAS types they build on)
+DEFAULT_LCM_PACKAGES = ("compas_lcmtypes", "molars_lcmtypes")
+DEFAULT_IMAGE_TYPE = "senlcm.image_t"
 
 
 async def run(
@@ -229,6 +226,7 @@ async def run(
     quality: int = 75,
     image_workers: int = DEFAULT_HEAVY_WORKERS,
     max_fps: float | None = None,
+    image_type: str = DEFAULT_IMAGE_TYPE,
 ) -> None:
     """
     Run the LCM WebSocket Dial proxy server.
@@ -239,14 +237,20 @@ async def run(
         quality: The JPEG quality level. Clamped to the range [0, 100].
         image_workers: Threads for image transcoding.
         max_fps: Optional per-channel cap on transcoded image frames per second.
+        image_type: LCM name of the image type to transcode to JPEG.
     """
-    registry = build_registry(DIAL_LCM_PACKAGES, logger)
+    registry = build_registry(options.lcm_packages, logger)
     if registry is None:
-        return
+        raise SystemExit(1)
+    try:
+        image_cls = find_lcm_type(registry.types, image_type)
+    except LookupError as e:
+        logger.critical(f"{e}. Check --lcm-packages and --image-type.")
+        raise SystemExit(1) from None
 
     quality = round(max(0, min(quality, 100)))
     jpeg_encoder = DownsamplingMJPEGEncoder(scale=scale, params=[cv2.IMWRITE_JPEG_QUALITY, quality])
-    handler = DialHandler(ImageMessageToJPEGHandler(jpeg_encoder), JSONHandler(registry), max_image_fps=max_fps)
+    handler = DialHandler(ImageMessageToJPEGHandler(jpeg_encoder, image_cls), JSONHandler(registry), max_image_fps=max_fps)
 
     logger.debug(f"Creating LCM republisher for channel '{options.channel}'")
     republisher = LCMRepublisher(options.channel)
@@ -267,10 +271,11 @@ def main():
     Entry point for the LCM WebSocket Dial proxy server.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    add_server_args(parser, compression_default="none")
+    add_server_args(parser, compression_default="none", lcm_packages_default=",".join(DEFAULT_LCM_PACKAGES))
     parser.add_argument("--scale", type=float, default=1.0, help="The scale factor to resize the image by. Default: %(default)s")
     parser.add_argument("--quality", type=int, default=75, help="The JPEG quality level, 0-100. Default: %(default)s")
     parser.add_argument("--max-fps", type=float, default=None, help="Cap on transcoded frames per second per image channel. Default: no cap")
+    parser.add_argument("--image-type", type=str, default=DEFAULT_IMAGE_TYPE, help="LCM name of the image type to transcode to JPEG. Default: %(default)s")
     parser.add_argument("--image-workers", type=int, default=DEFAULT_HEAVY_WORKERS, help="Threads for image transcoding. Default: %(default)s")
     args = parser.parse_args()
 
@@ -283,6 +288,7 @@ def main():
             quality=args.quality,
             image_workers=args.image_workers,
             max_fps=args.max_fps,
+            image_type=args.image_type,
         ),
         options,
         logger,

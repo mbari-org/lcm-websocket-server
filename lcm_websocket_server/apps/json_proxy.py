@@ -69,17 +69,16 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
         return TextPayload(encode_event_json_bytes(channel, fingerprint_hex, event))
 
 
-async def run(options: ServerOptions, lcm_packages: list[str]) -> None:
+async def run(options: ServerOptions) -> None:
     """
     Run the LCM WebSocket JSON proxy server.
 
     Args:
         options: Common server options
-        lcm_packages: LCM packages to discover types from
     """
-    registry = build_registry(lcm_packages, logger)
+    registry = build_registry(options.lcm_packages, logger)
     if registry is None:
-        return
+        raise SystemExit(1)
 
     logger.debug(f"Creating LCM republisher for channel '{options.channel}'")
     republisher = LCMRepublisher(options.channel)
@@ -100,11 +99,11 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     add_server_args(parser, compression_default="deflate")
-    parser.add_argument("lcm_packages", type=str, help="The LCM packages to discover LCM types from. Separate multiple packages with a comma.")
+    parser.add_argument("lcm_packages_positional", nargs="?", metavar="LCM_PACKAGES", help="Same as --lcm-packages (kept for compatibility).")
     args = parser.parse_args()
 
     options = parse_server_options(args, logger)
-    run_app(app_factory(run, options, args.lcm_packages.split(",")), options, logger)
+    run_app(app_factory(run, options), options, logger)
 
 
 if __name__ == "__main__":

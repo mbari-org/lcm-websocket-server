@@ -30,6 +30,7 @@ COMPRESSION_CHOICES = ("deflate", "none")
 class ServerOptions:
     """Options common to all proxy apps."""
 
+    lcm_packages: tuple[str, ...] = ()
     host: str = "localhost"
     port: int = 8765
     channel: str = ".*"
@@ -54,8 +55,11 @@ class ServerOptions:
         }
 
 
-def add_server_args(parser: argparse.ArgumentParser, compression_default: str) -> None:
+def add_server_args(
+    parser: argparse.ArgumentParser, compression_default: str, lcm_packages_default: str | None = None
+) -> None:
     """Add the common server arguments to a parser."""
+    parser.add_argument("--lcm-packages", type=str, default=lcm_packages_default, help="Comma-separated Python packages to discover LCM types from (searched recursively). Default: %(default)s")
     parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
     parser.add_argument("--port", type=int, default=8765, help="The port to listen on. Default: %(default)s")
     parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
@@ -77,7 +81,12 @@ def parse_server_options(args: argparse.Namespace, logger: logging.Logger) -> Se
         logger.warning("--poll-interval is deprecated and ignored; delivery is now event-driven")
     if args.processes < 1:
         raise SystemExit("--processes must be >= 1")
+    # An app may also accept the packages positionally (lcm_packages_positional)
+    packages = getattr(args, "lcm_packages_positional", None) or args.lcm_packages
+    if not packages:
+        raise SystemExit("No LCM packages given; pass --lcm-packages PKG[,PKG...]")
     return ServerOptions(
+        lcm_packages=tuple(p.strip() for p in packages.split(",") if p.strip()),
         host=args.host,
         port=args.port,
         channel=args.channel,
@@ -187,6 +196,10 @@ def run_app(app: AppFactory, options: ServerOptions, logger: logging.Logger) -> 
         terminate()
         for p in procs:
             p.join(timeout=5)
+    # Negative exit codes are signals (e.g. our own SIGTERM on shutdown)
+    failed = [p.name for p in procs if p.exitcode is not None and p.exitcode > 0]
+    if failed:
+        raise SystemExit(f"Worker(s) failed: {', '.join(failed)}")
     logger.info("Stopped")
 
 

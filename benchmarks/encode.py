@@ -2,22 +2,22 @@
 Microbenchmark of JSONHandler.handle (decode + JSON encode) on the stdlib
 and orjson paths.
 
-Usage (requires stdlcm/senlcm/navlcm/geolcm on PYTHONPATH):
+Usage (requires the lcmtypes extra: uv sync --all-extras):
     uv run python benchmarks/encode.py
 """
 import time
 
-from geolcm import point_t
+from compas_lcmtypes.geolcm import point_t
+from compas_lcmtypes.navlcm import odometry_t
+from compas_lcmtypes.senlcm import multibeam_euclidean_t
+from compas_lcmtypes.stdlcm import header_t
 from lcmutils import LCMTypeRegistry
-from navlcm import odometry_t
-from senlcm import multibeam_euclidean_t
-from stdlcm import header_t
 
 from lcm_websocket_server.apps.json_proxy import JSONHandler
 from lcm_websocket_server.lib.lcm_utils import types as T
 
 reg = LCMTypeRegistry()
-for p in ("stdlcm", "senlcm", "navlcm", "geolcm"): reg.discover(p)
+reg.discover("compas_lcmtypes")
 hdr = header_t(); hdr.frame_id = "base"
 odo = odometry_t(); odo.header = hdr
 mb = multibeam_euclidean_t(); mb.header = hdr; mb.n_beams = 512

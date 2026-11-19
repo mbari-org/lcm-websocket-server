@@ -6,7 +6,7 @@ import json
 import math
 
 import pytest
-from stdlcm import header_t
+from compas_lcmtypes.stdlcm import header_t
 
 from lcm_websocket_server.lib.lcm_utils import types as T
 
@@ -103,3 +103,22 @@ class TestEncodeEventJsonBytes:
 
     def test_none_event(self, backend):
         assert json.loads(T.encode_event_json_bytes("CH", "00", None))["event"] == {}
+
+
+class TestFindLcmType:
+    def test_finds_prefixed_type_by_lcm_name(self):
+        from compas_lcmtypes.senlcm import image_t
+
+        assert T.find_lcm_type([header_t, image_t], "senlcm.image_t") is image_t
+
+    def test_exact_module_match(self):
+        assert T.find_lcm_type([header_t], header_t.__module__) is header_t
+
+    def test_does_not_match_partial_names(self):
+        with pytest.raises(LookupError):
+            T.find_lcm_type([header_t], "dlcm.header_t")
+
+    def test_ambiguous_match_raises(self):
+        clone = type("header_t", (), {"__module__": "other_prefix.stdlcm.header_t"})
+        with pytest.raises(LookupError, match="exactly one"):
+            T.find_lcm_type([header_t, clone], "stdlcm.header_t")

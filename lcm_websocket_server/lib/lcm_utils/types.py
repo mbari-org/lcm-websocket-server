@@ -7,6 +7,7 @@ output is always valid JSON.
 """
 import json
 import math
+from collections.abc import Iterable
 from typing import Any
 
 try:
@@ -28,6 +29,21 @@ def _lcm_slots(tp: type) -> tuple[str, ...] | None:
             slots = tuple(tp.__slots__)
         _LCM_SLOTS[tp] = slots
         return slots
+
+
+def find_lcm_type(types: Iterable[type], name: str) -> type:
+    """
+    Find a type by its LCM name (e.g. "senlcm.image_t"), regardless of any
+    Python package prefix it was generated with (e.g. compas_lcmtypes.senlcm.image_t).
+
+    Raises:
+        LookupError: If no type, or more than one type, matches.
+    """
+    matches = [t for t in types if t.__module__ == name or t.__module__.endswith("." + name)]
+    if len(matches) != 1:
+        found = ", ".join(f"{t.__module__}" for t in matches) or "none"
+        raise LookupError(f"Expected exactly one LCM type named {name!r}, found: {found}")
+    return matches[0]
 
 
 def _encode_sequence(values) -> Any:

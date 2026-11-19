@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -211,6 +211,15 @@ wheels = [
 ]
 
 [[package]]
+name = "compas-lcmtypes"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/fd/161554aab889e12b611d86c81049371704a501b4145825eef32faf1d0827/compas_lcmtypes-0.4.0.tar.gz", hash = "sha256:5b1149e0ddaefd36720b7dc4df512a0e666f4b47186cda95a51613bdb9d8455b", size = 22057, upload-time = "2026-03-23T23:01:17.816Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/ab/05729ec3ce692bae2a4c5f1ed281a32b76caa176d3aa55a7d1650d891da8/compas_lcmtypes-0.4.0-py3-none-any.whl", hash = "sha256:1f74c278a1e7e6698058c6fa6448065564b770728dba80ed0423e00144701df9", size = 52245, upload-time = "2026-03-23T23:01:16.66Z" },
+]
+
+[[package]]
 name = "deprecated"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -386,6 +395,10 @@ image = [
     { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "opencv-python-headless" },
 ]
+lcmtypes = [
+    { name = "compas-lcmtypes" },
+    { name = "molars-lcmtypes" },
+]
 orjson = [
     { name = "orjson" },
 ]
@@ -395,6 +408,7 @@ uvloop = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "compas-lcmtypes" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -406,19 +420,22 @@ release = [
 
 [package.metadata]
 requires-dist = [
+    { name = "compas-lcmtypes", marker = "extra == 'lcmtypes'", specifier = ">=0.4,<0.5" },
     { name = "lcm", specifier = ">=1.5.0" },
     { name = "lcmlog-py", specifier = ">=0.1.0" },
     { name = "lcmutils", specifier = ">=0.1.1" },
+    { name = "molars-lcmtypes", marker = "extra == 'lcmtypes'", url = "https://github.com/CoMPASLab/molars_lcmtypes/releases/download/v0.1.0/molars_lcmtypes-0.1.0-py3-none-any.whl" },
     { name = "numpy", marker = "extra == 'image'", specifier = ">=1.26.4" },
     { name = "opencv-python-headless", marker = "extra == 'image'", specifier = ">=4.9.0.80" },
     { name = "orjson", marker = "extra == 'orjson'", specifier = ">=3.10" },
     { name = "uvloop", marker = "extra == 'uvloop'", specifier = ">=0.21" },
     { name = "websockets", specifier = ">=16.0" },
 ]
-provides-extras = ["image", "orjson", "uvloop"]
+provides-extras = ["image", "orjson", "uvloop", "lcmtypes"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "compas-lcmtypes", specifier = ">=0.4,<0.5" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
@@ -595,6 +612,20 @@ sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec9
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
 ]
+
+[[package]]
+name = "molars-lcmtypes"
+version = "0.1.0"
+source = { url = "https://github.com/CoMPASLab/molars_lcmtypes/releases/download/v0.1.0/molars_lcmtypes-0.1.0-py3-none-any.whl" }
+dependencies = [
+    { name = "compas-lcmtypes" },
+]
+wheels = [
+    { url = "https://github.com/CoMPASLab/molars_lcmtypes/releases/download/v0.1.0/molars_lcmtypes-0.1.0-py3-none-any.whl", hash = "sha256:49e0ee147b110699b44fc84ab8a34edf25c519151a868806c49b0c07e57a275a" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "compas-lcmtypes", specifier = ">=0.4,<0.5" }]
 
 [[package]]
 name = "nodeenv"

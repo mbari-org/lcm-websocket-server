@@ -5,7 +5,7 @@ Tests for JSONHandler.
 import inspect
 import json
 
-from stdlcm import header_t
+from compas_lcmtypes.stdlcm import header_t
 
 from lcm_websocket_server.lib.handler import TextPayload
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMObserver, LCMRepublisher

@@ -26,6 +26,11 @@ orjson = [
 uvloop = [
     "uvloop>=0.21",
 ]
+# LCM types used by the Docker image and the Dial proxy defaults
+lcmtypes = [
+    "compas-lcmtypes>=0.4,<0.5",
+    "molars-lcmtypes @ https://github.com/CoMPASLab/molars_lcmtypes/releases/download/v0.1.0/molars_lcmtypes-0.1.0-py3-none-any.whl",
+]
 
 [project.scripts]
 lcm-websocket-server = "lcm_websocket_server.apps.json_proxy:main"
@@ -36,11 +41,16 @@ lcm-websocket-dial-proxy = "lcm_websocket_server.apps.dial_proxy:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+# molars-lcmtypes is published as GitHub release assets, not on PyPI
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["lcm_websocket_server"]
 
 [dependency-groups]
 dev = [
+    "compas-lcmtypes>=0.4,<0.5",
     "pre-commit>=4.2.0",
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -53,7 +63,7 @@ release = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = ["tests/lcmtypes", "."]
+pythonpath = ["."]
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
@@ -62,7 +72,6 @@ target-version = "py311"
 extend-exclude = [
     "lcm_websocket_server/lib/lcm_utils/channel_stats.py",
     "lcm_websocket_server/lib/lcm_utils/channel_stats_list.py",
-    "tests/lcmtypes",
 ]
 
 [tool.semantic_release]

@@ -1,4 +1,4 @@
-exclude: ^(tests/lcmtypes/|lcm_websocket_server/lib/lcm_utils/channel_stats(_list)?\.py$)
+exclude: ^(lcm_websocket_server/lib/lcm_utils/channel_stats(_list)?\.py$)
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.6

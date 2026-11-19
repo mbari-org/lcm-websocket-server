@@ -9,7 +9,7 @@ Clients run in separate worker processes and report delivered frames,
 end-to-end latency (from the header_t timestamp stamped at publish) and the
 spy channel's reported rates.
 
-Usage (requires stdlcm/senlcm/navlcm/geolcm on PYTHONPATH):
+Usage (requires the lcmtypes extra: uv sync --all-extras):
     uv run python benchmarks/load.py SUITE [--duration S]
 
 Suites: latency, json-scale, json-rate, dial, slow, periodic, all
@@ -92,6 +92,7 @@ def run_server(port, mode, server_kwargs, streams, ready, go, window_end, stop, 
     import logging
 
     import cv2
+    from compas_lcmtypes.senlcm import image_t
 
     from lcm_websocket_server.apps.dial_proxy import (
         DialHandler,
@@ -113,11 +114,11 @@ def run_server(port, mode, server_kwargs, streams, ready, go, window_end, stop, 
 
     pubsub._logger.addHandler(DropCounter())
 
-    registry = build_registry(["stdlcm", "senlcm", "navlcm", "geolcm"], logging.getLogger("bench"))
+    registry = build_registry(["compas_lcmtypes"], logging.getLogger("bench"))
     json_handler = JSONHandler(registry)
     if mode == "dial":
         encoder = DownsamplingMJPEGEncoder(scale=1.0, params=[cv2.IMWRITE_JPEG_QUALITY, 75])
-        inner = DialHandler(ImageMessageToJPEGHandler(encoder), json_handler)
+        inner = DialHandler(ImageMessageToJPEGHandler(encoder, image_t), json_handler)
     else:
         inner = json_handler
 

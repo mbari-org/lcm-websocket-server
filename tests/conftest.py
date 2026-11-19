@@ -19,9 +19,9 @@ import cv2
 import numpy as np
 import pytest
 import pytest_asyncio
+from compas_lcmtypes.senlcm import image_t
+from compas_lcmtypes.stdlcm import header_t
 from lcmutils import LCMTypeRegistry
-from senlcm import image_t
-from stdlcm import header_t
 
 from lcm_websocket_server.apps.dial_proxy import (
     DialHandler,
@@ -99,9 +99,9 @@ def make_bgr_image_t(width: int = 8, height: int = 6, timestamp: int = 0) -> byt
 
 @pytest.fixture(scope="session")
 def registry() -> LCMTypeRegistry:
-    """Shared LCMTypeRegistry with stdlcm and senlcm types (plus internal spy types)."""
+    """Shared LCMTypeRegistry with the CoMPAS types (plus internal spy types)."""
     reg = LCMTypeRegistry()
-    for pkg in ("stdlcm", "senlcm"):
+    for pkg in ("compas_lcmtypes",):
         try:
             reg.discover(pkg)
         except ModuleNotFoundError:
@@ -132,7 +132,7 @@ def json_handler(registry: LCMTypeRegistry) -> JSONHandler:
 @pytest.fixture
 def image_handler(jpeg_encoder: DownsamplingMJPEGEncoder) -> ImageMessageToJPEGHandler:
     """Fresh ImageMessageToJPEGHandler per test (fresh decoder cache)."""
-    return ImageMessageToJPEGHandler(jpeg_encoder)
+    return ImageMessageToJPEGHandler(jpeg_encoder, image_t)
 
 
 @pytest.fixture

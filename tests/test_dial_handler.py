@@ -8,7 +8,7 @@ import json
 import cv2
 import numpy as np
 import pytest
-from senlcm import image_t
+from compas_lcmtypes.senlcm import image_t
 
 from lcm_websocket_server.apps.dial_proxy import (
     DialHandler,
@@ -61,7 +61,7 @@ class TestImageMessageToJPEGHandler:
 
     def test_downsampling_encoder_reduces_dimensions(self, registry):
         enc = DownsamplingMJPEGEncoder(scale=0.5, params=[cv2.IMWRITE_JPEG_QUALITY, 75])
-        handler = ImageMessageToJPEGHandler(enc)
+        handler = ImageMessageToJPEGHandler(enc, image_t)
         jpeg = handler.handle("CAM", make_bgr_image_t(width=16, height=12))
         arr = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
         assert arr.shape == (6, 8, 3)
@@ -109,11 +109,10 @@ class TestDialHandlerRouting:
         result = dial_handler.handle("CH", garbage)
         assert result is None
 
-    def test_fingerprint_routing_matches_image_t(self, dial_handler):
-        """Verify DialHandler.IMAGE_T_FINGERPRINT matches the real type."""
+    def test_routes_by_configured_image_type_fingerprint(self, dial_handler):
         raw = make_bgr_image_t()
-        fingerprint_in_data = raw[:8]
-        assert fingerprint_in_data == DialHandler.IMAGE_T_FINGERPRINT
+        assert raw[:8] == image_t._get_packed_fingerprint()
+        assert dial_handler.is_heavy("CAM", raw)
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import threading
 import time
 
 import pytest
-from stdlcm import header_t
+from compas_lcmtypes.stdlcm import header_t
 
 from lcm_websocket_server.lib.lcm_utils.pubsub import (
     MAX_CHANNEL_REGEX_LENGTH,
