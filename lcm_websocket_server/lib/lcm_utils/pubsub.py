@@ -2,7 +2,6 @@
 LCM pub/sub utilities.
 """
 
-import logging
 import queue
 import re
 import threading
@@ -10,9 +9,12 @@ from time import monotonic_ns
 
 from lcmutils import LCMDaemon
 
-from lcm_websocket_server.lib.log import LogMixin
+from lcm_websocket_server.lib.log import LogMixin, get_logger
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger(__name__)
+
+# LCM handle timeout so the daemon thread can observe stop() on a quiet bus.
+DAEMON_TIMEOUT_MS = 100
 
 OBSERVER_QUEUE_MAXSIZE = 64
 
@@ -131,7 +133,7 @@ class LCMRepublisher(LogMixin):
         """
         self._channel = channel
 
-        self._daemon = LCMDaemon()
+        self._daemon = LCMDaemon(timeout_millis=DAEMON_TIMEOUT_MS)
         self._daemon.subscribe(self._channel)(self._handle)
 
         self._subscribers: list[LCMObserver] = []

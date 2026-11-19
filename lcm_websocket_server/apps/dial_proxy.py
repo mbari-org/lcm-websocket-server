@@ -252,12 +252,12 @@ async def run(
         spy_emit_interval_ns=spy_emit_interval_ns,
     )
 
-    # Start the server
+    # Start the server; always stop the LCM republisher on exit
     logger.debug("Starting LCM WebSocket server")
-    await server.serve()
-
-    # Stop the LCM republisher
-    lcm_republisher.stop()
+    try:
+        await server.serve()
+    finally:
+        lcm_republisher.stop()
 
 
 def main():

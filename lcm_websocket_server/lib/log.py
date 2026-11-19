@@ -24,8 +24,10 @@ def get_logger(name: str, level: int = logging.DEBUG) -> logging.Logger:
     Returns:
         Logger.
     """
-    logger = logging.Logger(name, level)
-    logger.addHandler(STREAM_HANDLER)
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    if STREAM_HANDLER not in logger.handlers:
+        logger.addHandler(STREAM_HANDLER)
     return logger
 
 
@@ -65,5 +67,4 @@ class LogMixin:
         """
         if not hasattr(self, "_logger"):
             self._logger = get_logger(self.__class__.__name__)
-            self._logger.addHandler(logging.NullHandler())
         return self._logger

@@ -5,6 +5,7 @@ from typing import Optional
 
 from lcmutils import LCMTypeRegistry
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import ConnectionClosed
 from websockets.protocol import OPEN
 
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
@@ -92,6 +93,8 @@ class LCMWebSocketServer(LogMixin):
                 await self._periodic_update_loop(observer, websocket, update_interval_ms, spy, spy_observer)
             else:
                 await self._update_loop(observer, websocket, spy, spy_observer)
+        except ConnectionClosed:
+            pass
         except Exception as e:
             self.logger.error(f"Unexpected error in client {websocket.id}: {e}")
         finally:
@@ -173,11 +176,9 @@ class LCMWebSocketServer(LogMixin):
                     continue  # finally still runs
 
                 if response is not None:
-                    try:
-                        await websocket.send(response)
-                    except Exception as e:
-                        self.logger.debug(f"Error while sending response to client {websocket.id}: {e}")
-                        continue  # finally still runs; skip spy on broken connection
+                    await websocket.send(response)
+            except ConnectionClosed:
+                break  # finally still runs; stop work for a dead connection
             finally:
                 observer.task_done()
 
@@ -238,8 +239,8 @@ class LCMWebSocketServer(LogMixin):
                 if response is not None:
                     try:
                         await websocket.send(response)
-                    except Exception as e:
-                        self.logger.debug(f"Error while sending response to client {websocket.id}: {e}")
+                    except ConnectionClosed:
+                        return
 
             try:
                 await self._send_virtual_spy_if_due(websocket, spy)

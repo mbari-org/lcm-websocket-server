@@ -329,3 +329,17 @@ class TestRepublisherThreadSafety:
 
         ch, data = obs.get(block=False)
         assert header_t.decode(data).sequence == 42
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle
+# ---------------------------------------------------------------------------
+
+class TestLCMRepublisherLifecycle:
+    def test_stop_returns_promptly_on_quiet_bus(self):
+        """stop() must not hang waiting on a blocking lcm.handle() call."""
+        rp = LCMRepublisher("LWS_TEST_QUIET_CHANNEL_NOBODY_PUBLISHES")
+        rp.start()
+        t0 = time.monotonic()
+        rp.stop()
+        assert time.monotonic() - t0 < 2.0
