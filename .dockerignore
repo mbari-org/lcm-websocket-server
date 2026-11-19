@@ -10,3 +10,9 @@ dist/
 scripts/
 
 *__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.github/
+benchmarks/
+tests/

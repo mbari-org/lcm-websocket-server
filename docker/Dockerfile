@@ -12,20 +12,25 @@ COPY . /app
 WORKDIR /app
 
 # Build lcm_websocket_server*.whl
-RUN uv build
+RUN uv build --wheel
 
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 # Copy glib-2.0 shared libraries
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0 /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0
 
-# Install lcm-websocket-server:
+# Install lcm-websocket-server with the performance extras
 COPY --from=builder /app/dist/*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/*.whl
+RUN uv pip install --system --no-cache "$(ls /tmp/lcm_websocket_server-*.whl)[orjson,uvloop]"
 
 ENV HOST=0.0.0.0
 ENV PORT=8765
 ENV CHANNEL=.*
 ENV LCM_PACKAGES=
+# Extra command-line flags, e.g. "--uvloop --processes 4 -vv"
+ENV ARGS=
 
-CMD ["sh", "-c", "PYTHONPATH=$PYTHONPATH:/app lcm-websocket-server --host \"$HOST\" --port \"$PORT\" --channel \"$CHANNEL\" \"$LCM_PACKAGES\""]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD ["python", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ['PORT'], timeout=3)"]
+
+CMD ["sh", "-c", "PYTHONPATH=$PYTHONPATH:/app lcm-websocket-json-proxy --host \"$HOST\" --port \"$PORT\" --channel \"$CHANNEL\" $ARGS \"$LCM_PACKAGES\""]

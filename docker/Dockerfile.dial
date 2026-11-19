@@ -2,14 +2,14 @@ ARG VERSION=latest
 FROM mbari/lcm-websocket-server:$VERSION
 
 # Install lcm-websocket-server with the image extra
-RUN pip install --no-cache-dir $(ls /tmp/*.whl | head -n 1)[image]
+RUN uv pip install --system --no-cache "$(ls /tmp/lcm_websocket_server-*.whl | head -n 1)[image,orjson,uvloop]"
 
 # Install the molars-lcmtypes wheel from the host
 COPY molars_lcmtypes-0.0.0-py3-none-any.whl /tmp/molars_lcmtypes-0.0.0-py3-none-any.whl
-RUN pip install --no-cache-dir /tmp/molars_lcmtypes-0.0.0-py3-none-any.whl
+RUN uv pip install --system --no-cache /tmp/molars_lcmtypes-0.0.0-py3-none-any.whl
 
 ENV JPEG_QUALITY=75
 ENV JPEG_SCALE=1.0
 
-# Run lcm-websocket-dial-proxy
-CMD ["sh", "-c", "lcm-websocket-dial-proxy -vv --host \"$HOST\" --port \"$PORT\" --channel \"$CHANNEL\" --quality \"$JPEG_QUALITY\" --scale \"$JPEG_SCALE\""]
+# Run lcm-websocket-dial-proxy (HEALTHCHECK is inherited from the base image)
+CMD ["sh", "-c", "lcm-websocket-dial-proxy -vv --host \"$HOST\" --port \"$PORT\" --channel \"$CHANNEL\" --quality \"$JPEG_QUALITY\" --scale \"$JPEG_SCALE\" $ARGS"]
