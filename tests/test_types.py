@@ -25,7 +25,7 @@ class Point:
 
 
 class Message:
-    __slots__ = ["header", "values", "ints", "points", "raw", "matrix", "flag", "name", "scalar"]
+    __slots__ = ["header", "values", "ints", "points", "raw", "matrix", "flag", "name", "scalar"]  # noqa: RUF023 - lcm-gen field order
 
     @staticmethod
     def _get_packed_fingerprint():

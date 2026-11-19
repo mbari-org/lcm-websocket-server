@@ -7,16 +7,19 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 import sys
 
 import pytest
 import websockets
 
-from lcm_websocket_server.lib.cli import ServerOptions, add_server_args, build_registry, parse_server_options
+from lcm_websocket_server.lib.cli import (
+    ServerOptions,
+    add_server_args,
+    build_registry,
+    parse_server_options,
+)
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
 from lcm_websocket_server.lib.server import LCMWebSocketServer
-
 from tests.conftest import free_port, make_header_t
 
 logger = logging.getLogger("test-cli")
@@ -98,9 +101,9 @@ class TestMultiProcess:
         """End to end: the CLI starts 2 workers sharing a port; each serves the spy channel."""
         port = free_port()
         env = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "lcm_websocket_server.apps.json_proxy", "--port", str(port),
-             "--processes", "2", "--spy-interval", "0.1", "--channel", "LWS_TEST_NO_TRAFFIC", "stdlcm"],
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "lcm_websocket_server.apps.json_proxy", "--port", str(port),
+            "--processes", "2", "--spy-interval", "0.1", "--channel", "LWS_TEST_NO_TRAFFIC", "stdlcm",
             env=env,
         )
         try:
@@ -117,4 +120,4 @@ class TestMultiProcess:
                 assert msg["channel"] == "LWS_LCM_SPY"
         finally:
             proc.terminate()
-            assert proc.wait(timeout=10) is not None
+            await asyncio.wait_for(proc.wait(), 10)

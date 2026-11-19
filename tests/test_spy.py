@@ -6,8 +6,11 @@ import pytest
 
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
-from lcm_websocket_server.lib.lcm_utils.spy import VIRTUAL_CHANNEL, LCMSpy, SpyAccumulator
-
+from lcm_websocket_server.lib.lcm_utils.spy import (
+    VIRTUAL_CHANNEL,
+    LCMSpy,
+    SpyAccumulator,
+)
 from tests.conftest import make_header_t
 
 S = 1_000_000_000  # one second in ns
