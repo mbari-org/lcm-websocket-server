@@ -1,5 +1,5 @@
 """
-Tests for LCMObserver, LCMTimedObserver, and LCMRepublisher.
+Tests for LCMObserver and LCMRepublisher.
 """
 
 import asyncio
@@ -14,7 +14,6 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
     OBSERVER_QUEUE_MAXSIZE,
     LCMObserver,
     LCMRepublisher,
-    LCMTimedObserver,
     InvalidChannelRegex,
     MAX_CHANNEL_REGEX_LENGTH,
 )
@@ -144,44 +143,6 @@ class TestLCMObserverChannelMatching:
     def test_overlong_regex_raises(self):
         with pytest.raises(InvalidChannelRegex):
             LCMObserver(channel_regex="A" * (MAX_CHANNEL_REGEX_LENGTH + 1))
-
-
-# ---------------------------------------------------------------------------
-# LCMTimedObserver
-# ---------------------------------------------------------------------------
-
-class TestLCMTimedObserver:
-    def test_includes_monotonic_timestamp(self):
-        obs = LCMTimedObserver()
-        before = time.monotonic_ns()
-        obs.handle(("CH", make_header_t()))
-        after = time.monotonic_ns()
-
-        _, _, ts = obs.get_nowait()
-
-        assert before <= ts <= after
-
-    def test_drop_oldest_preserves_latest_timestamps(self):
-        obs = LCMTimedObserver(queue_maxsize=2)
-        for i in range(5):
-            obs.handle(("CH", make_header_t(sequence=i)))
-            time.sleep(0.001)  # Ensure distinct timestamps
-
-        assert len(obs) == 2
-
-        items = []
-        while True:
-            try:
-                items.append(obs.get_nowait())
-            except queue.Empty:
-                break
-
-        # Timestamps should be strictly increasing (oldest-first FIFO).
-        timestamps = [item[2] for item in items]
-        assert timestamps == sorted(timestamps)
-        # And they should correspond to the last two messages.
-        sequences = [header_t.decode(item[1]).sequence for item in items]
-        assert sequences == [3, 4]
 
 
 # ---------------------------------------------------------------------------

@@ -505,3 +505,41 @@ class TestConflation:
         _, port = await server_factory(json_handler, observer_queue_maxsize=4)
         received = await self._burst_then_collect(port, "?update_interval_ms=50", republisher)
         assert received == {"QUIET": [1], "BUSY": [49]}
+
+
+# ---------------------------------------------------------------------------
+# Spy virtual channel
+# ---------------------------------------------------------------------------
+
+class TestSpyChannel:
+    async def test_spy_counts_every_message_even_when_client_queue_overflows(
+        self, server_factory, json_handler, registry, republisher: LCMRepublisher
+    ):
+        """Spy counts come from the shared tap, not from the (bounded) client queue."""
+        _, port = await server_factory(
+            json_handler, spy_registry=registry, observer_queue_maxsize=2, spy_emit_interval_ns=200_000_000
+        )
+        async with websockets.connect(f"ws://localhost:{port}/LWS_LCM_SPY") as ws:
+            await asyncio.sleep(0.05)
+            for i in range(500):
+                republisher.inject("NAV", make_header_t(sequence=i))
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                msg = json.loads(await recv(ws))
+                assert msg["channel"] == "LWS_LCM_SPY"
+                channels = {c["channel"]: c for c in msg["event"]["channels"]}
+                if "NAV" in channels:
+                    assert channels["NAV"]["num_msgs"] == 500
+                    break
+            else:
+                pytest.fail("NAV never reported by spy")
+
+    async def test_spy_not_sent_to_clients_not_matching_virtual_channel(
+        self, server_factory, json_handler, registry, republisher: LCMRepublisher
+    ):
+        _, port = await server_factory(json_handler, spy_registry=registry, spy_emit_interval_ns=50_000_000)
+        async with websockets.connect(f"ws://localhost:{port}/NAV") as ws:
+            await asyncio.sleep(0.2)
+            republisher.inject("NAV", make_header_t(sequence=3))
+            msg = json.loads(await recv(ws))
+            assert msg["channel"] == "NAV"

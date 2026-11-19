@@ -13,9 +13,8 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
     InvalidChannelRegex,
     LCMObserver,
     LCMRepublisher,
-    LCMTimedObserver,
 )
-from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy
+from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy, SpyAccumulator
 from lcm_websocket_server.lib.log import LogMixin
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -75,6 +74,9 @@ class LCMWebSocketServer(LogMixin):
         self._spy_registry = spy_registry
         self._observer_queue_maxsize = observer_queue_maxsize
         self._spy_emit_interval_ns = spy_emit_interval_ns
+        self._spy_accumulator = (
+            SpyAccumulator(spy_registry, window_ns=spy_emit_interval_ns) if spy_registry is not None else None
+        )
 
         self._server = None
 
@@ -110,11 +112,8 @@ class LCMWebSocketServer(LogMixin):
         else:
             tasks.append(asyncio.create_task(self._stream_loop(observer, websocket)))
 
-        spy_observer = None
-        if self._spy_registry is not None and observer.match(LCMSpy.VIRTUAL_CHANNEL):
-            spy_observer = LCMTimedObserver(channel_regex=".*", queue_maxsize=self._observer_queue_maxsize)
-            self._lcm_republisher.subscribe(spy_observer)
-            tasks.append(asyncio.create_task(self._spy_loop(websocket, LCMSpy(self._spy_registry), spy_observer)))
+        if self._spy_accumulator is not None and observer.match(LCMSpy.VIRTUAL_CHANNEL):
+            tasks.append(asyncio.create_task(self._spy_loop(websocket, LCMSpy(self._spy_accumulator))))
             self.logger.info(f"Enabled per-connection spy stats for client {websocket.id}")
 
         closed = asyncio.create_task(websocket.wait_closed())
@@ -132,8 +131,6 @@ class LCMWebSocketServer(LogMixin):
                 task.cancel()
             await asyncio.gather(*tasks, closed, return_exceptions=True)
             self._lcm_republisher.unsubscribe(observer)
-            if spy_observer is not None:
-                self._lcm_republisher.unsubscribe(spy_observer)
             self.logger.info(
                 f"Client {websocket.id} disconnected; "
                 f"active subscribers: {self._lcm_republisher.subscriber_count}"
@@ -187,15 +184,15 @@ class LCMWebSocketServer(LogMixin):
                 if payload is not None:
                     await self._send(websocket, payload)
 
-    async def _spy_loop(self, websocket: ServerConnection, spy: LCMSpy, spy_observer: LCMTimedObserver):
+    async def _spy_loop(self, websocket: ServerConnection, spy: LCMSpy):
         """Emit the virtual spy channel at a fixed cadence."""
+        loop = asyncio.get_running_loop()
         interval = self._spy_emit_interval_ns / 1e9
+        deadline = loop.time()
         while True:
-            await asyncio.sleep(interval)
-            for channel, data, timestamp_ns in spy_observer.drain():
-                spy.handle(channel, data, timestamp_ns=timestamp_ns)
-            payload = spy.maybe_get_stats_bytes(0)
-            response = await self._encode(LCMSpy.VIRTUAL_CHANNEL, payload)
+            deadline += interval
+            await asyncio.sleep(max(0.0, deadline - loop.time()))
+            response = await self._encode(LCMSpy.VIRTUAL_CHANNEL, spy.get_stats_bytes())
             if response is not None:
                 await self._send(websocket, response)
 
@@ -203,8 +200,14 @@ class LCMWebSocketServer(LogMixin):
         """
         Run the server.
         """
-        async with serve(self.websocket_handler, self._host, self._port) as self._server:
-            await self._server.wait_closed()
+        if self._spy_accumulator is not None:
+            self._lcm_republisher.add_tap(self._spy_accumulator.record)
+        try:
+            async with serve(self.websocket_handler, self._host, self._port) as self._server:
+                await self._server.wait_closed()
+        finally:
+            if self._spy_accumulator is not None:
+                self._lcm_republisher.remove_tap(self._spy_accumulator.record)
 
     def close(self):
         """

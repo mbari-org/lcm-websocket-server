@@ -1,167 +1,128 @@
 """
-Tests for LCMSpy and ChannelData statistics accumulation.
+Tests for SpyAccumulator (shared counters) and LCMSpy (per-connection view).
 """
 
-import time
-
 import pytest
-from stdlcm import header_t
 
-from lcm_websocket_server.lib.lcm_utils.spy import ChannelData, LCMSpy
+from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
+from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
+from lcm_websocket_server.lib.lcm_utils.spy import VIRTUAL_CHANNEL, LCMSpy, SpyAccumulator
 
 from tests.conftest import make_header_t
 
+S = 1_000_000_000  # one second in ns
+T0 = 10 * S  # arbitrary monotonic origin
 
-# ---------------------------------------------------------------------------
-# ChannelData: per-message accounting
-# ---------------------------------------------------------------------------
 
-class TestChannelData:
-    def test_message_count_increments(self):
-        cd = ChannelData()
-        cd.message_received("header_t", 64, True)
-        cd.message_received("header_t", 64, True)
-        assert cd._num_msgs == 2
+@pytest.fixture
+def acc(registry) -> SpyAccumulator:
+    return SpyAccumulator(registry, window_ns=S)
 
-    def test_undecodable_count_increments_on_failure(self):
-        cd = ChannelData()
-        cd.message_received("header_t", 64, decoded=True)
-        cd.message_received("??", 8, decoded=False)
-        assert cd._undecodable == 1
 
-    def test_hz_estimate_after_update(self):
-        cd = ChannelData()
-        start = time.monotonic_ns()
-        for _ in range(10):
-            cd.message_received("header_t", 64, True, timestamp_ns=start)
-        elapsed_ns = int(1e9)  # Pretend 1 second elapsed
-        cd.update_hz_data(start + elapsed_ns)
-        # 10 messages in ~1 second → ~10 Hz
-        assert 5.0 < cd._hz < 20.0
-
-    def test_bandwidth_estimate(self):
-        cd = ChannelData()
-        start = time.monotonic_ns()
-        for _ in range(100):
-            cd.message_received("header_t", 1000, True, timestamp_ns=start)
-        cd.update_hz_data(start + int(1e9))
-        # 100 * 1000 bytes in ~1 second = ~100 kB/s
-        assert 50_000 < cd._bandwidth < 200_000
-
-    def test_jitter_computed_from_interval_spread(self):
-        cd = ChannelData()
-        # Irregular spacing: 100ms, 200ms
-        t0 = time.monotonic_ns()
-        cd.message_received("h", 64, True, timestamp_ns=t0)
-        cd.message_received("h", 64, True, timestamp_ns=t0 + 100_000_000)
-        cd.message_received("h", 64, True, timestamp_ns=t0 + 300_000_000)
-        cd.update_hz_data(t0 + int(1e9))
-        # jitter = max_interval - min_interval = 200ms - 100ms = 100ms
-        # ChannelData stores _min_interval / _max_interval in seconds after update.
-        assert cd._min_interval is not None
-        assert cd._max_interval is not None
-        stats = cd.report("CH")
-        # jitter ≈ 0.1 seconds (200ms - 100ms)
-        assert 0.05 < stats.jitter < 0.2, f"Unexpected jitter: {stats.jitter}"
-
-    def test_report_populates_channel_stats_fields(self):
-        cd = ChannelData()
-        cd.message_received("header_t", 64, True)
-        start = time.monotonic_ns()
-        cd.update_hz_data(start + int(1e9))
-        stats = cd.report("MY_CHANNEL")
-        assert stats.channel == "MY_CHANNEL"
-        assert stats.type == "header_t"
-        assert stats.num_msgs == 1
+def stats_by_channel(stats_list: channel_stats_list) -> dict:
+    return {cs.channel: cs for cs in stats_list.channels}
 
 
 # ---------------------------------------------------------------------------
-# LCMSpy: accumulation and emission
+# SpyAccumulator
+# ---------------------------------------------------------------------------
+
+class TestSpyAccumulator:
+    def test_counts_messages_bytes_and_type(self, acc):
+        data = make_header_t()
+        for i in range(3):
+            acc.record("IMU", data, T0 + i)
+        snap = acc.snapshot(T0 + 10)["IMU"]
+        assert snap.num_msgs == 3
+        assert snap.num_bytes == 3 * len(data)
+        assert snap.type_name == "header_t"
+        assert snap.undecodable == 0
+
+    def test_unknown_type_counted_as_undecodable(self, acc):
+        acc.record("RAW", b"\x01" * 16, T0)
+        snap = acc.snapshot(T0)["RAW"]
+        assert snap.undecodable == 1
+        assert snap.type_name == ("01" * 8)
+
+    def test_ignores_virtual_channel(self, acc):
+        acc.record(VIRTUAL_CHANNEL, make_header_t(), T0)
+        assert acc.snapshot(T0) == {}
+
+    def test_jitter_is_interval_spread_over_window(self, acc):
+        data = make_header_t()
+        acc.record("CH", data, T0)
+        acc.record("CH", data, T0 + 100_000_000)  # 100 ms
+        acc.record("CH", data, T0 + 300_000_000)  # 200 ms
+        snap = acc.snapshot(T0 + S)  # window closes
+        assert snap["CH"].jitter_s == pytest.approx(0.1)
+
+    def test_jitter_zero_with_single_message(self, acc):
+        acc.record("CH", make_header_t(), T0)
+        assert acc.snapshot(T0 + S)["CH"].jitter_s == 0.0
+
+    def test_works_as_republisher_tap(self, acc):
+        r = LCMRepublisher(".*")
+        r.add_tap(acc.record)
+        for _ in range(5):
+            r.inject("CH", make_header_t())
+        assert acc.snapshot()["CH"].num_msgs == 5
+
+
+# ---------------------------------------------------------------------------
+# LCMSpy (per-connection view)
 # ---------------------------------------------------------------------------
 
 class TestLCMSpy:
-    def test_handle_tracks_channel(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle("SENSOR", make_header_t(), timestamp_ns=time.monotonic_ns())
-        assert "SENSOR" in spy._channel_data
+    def test_counts_are_relative_to_view_creation(self, acc):
+        data = make_header_t()
+        for i in range(7):
+            acc.record("CH", data, T0 + i)
+        spy = LCMSpy(acc, now_ns=T0 + 10)
+        for i in range(3):
+            acc.record("CH", data, T0 + 20 + i)
+        cs = stats_by_channel(spy.get_stats(now_ns=T0 + S))["CH"]
+        assert cs.num_msgs == 3
 
-    def test_handle_ignores_virtual_spy_channel(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle(LCMSpy.VIRTUAL_CHANNEL, b"\x00" * 8)
-        assert LCMSpy.VIRTUAL_CHANNEL not in spy._channel_data
+    def test_channels_without_new_messages_are_omitted(self, acc):
+        acc.record("OLD", make_header_t(), T0)
+        spy = LCMSpy(acc, now_ns=T0 + 1)
+        acc.record("NEW", make_header_t(), T0 + 2)
+        assert list(stats_by_channel(spy.get_stats(now_ns=T0 + S))) == ["NEW"]
 
-    def test_multiple_channels_tracked_independently(self, registry):
-        spy = LCMSpy(registry)
-        for i in range(5):
-            spy.handle("IMU", make_header_t(sequence=i), timestamp_ns=time.monotonic_ns())
-        spy.handle("GPS", make_header_t(), timestamp_ns=time.monotonic_ns())
+    def test_hz_and_bandwidth_over_emission_period(self, acc):
+        data = make_header_t()
+        spy = LCMSpy(acc, now_ns=T0)
+        for i in range(10):
+            acc.record("CH", data, T0 + i * 100_000_000)
+        cs = stats_by_channel(spy.get_stats(now_ns=T0 + S))["CH"]
+        assert cs.hz == pytest.approx(10.0)
+        assert cs.inv_hz == pytest.approx(0.1)
+        assert cs.bandwidth == pytest.approx(10 * len(data))
 
-        assert "IMU" in spy._channel_data
-        assert "GPS" in spy._channel_data
-        assert spy._channel_data["IMU"]._num_msgs == 5
-        assert spy._channel_data["GPS"]._num_msgs == 1
+        # Next period: no new messages -> 0 Hz, but cumulative count persists
+        cs = stats_by_channel(spy.get_stats(now_ns=T0 + 2 * S))["CH"]
+        assert cs.hz == 0.0
+        assert cs.inv_hz == 9999.0
+        assert cs.num_msgs == 10
 
-    def test_get_stats_returns_sorted_channel_list(self, registry):
-        spy = LCMSpy(registry)
+    def test_views_are_independent(self, acc):
+        data = make_header_t()
+        early = LCMSpy(acc, now_ns=T0)
+        acc.record("CH", data, T0 + 1)
+        late = LCMSpy(acc, now_ns=T0 + 2)
+        acc.record("CH", data, T0 + 3)
+        assert stats_by_channel(early.get_stats(now_ns=T0 + S))["CH"].num_msgs == 2
+        assert stats_by_channel(late.get_stats(now_ns=T0 + S))["CH"].num_msgs == 1
+
+    def test_channels_sorted(self, acc):
+        spy = LCMSpy(acc, now_ns=T0)
         for ch in ("ZEBRA", "ALPHA", "MANGO"):
-            spy.handle(ch, make_header_t(), timestamp_ns=time.monotonic_ns())
+            acc.record(ch, make_header_t(), T0 + 1)
+        assert [cs.channel for cs in spy.get_stats(now_ns=T0 + S).channels] == ["ALPHA", "MANGO", "ZEBRA"]
 
-        stats = spy.get_stats()
-        channels = [cs.channel for cs in stats.channels]
-        assert channels == sorted(channels)
-
-    def test_maybe_get_stats_bytes_returns_none_before_interval(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle("CH", make_header_t(), timestamp_ns=time.monotonic_ns())
-
-        # Immediately after construction, the interval hasn't elapsed.
-        result = spy.maybe_get_stats_bytes(interval_ns=int(1e9))
-        assert result is None
-
-    def test_maybe_get_stats_bytes_emits_after_interval(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle("CH", make_header_t(), timestamp_ns=time.monotonic_ns())
-
-        # Use a very short interval to trigger emission immediately.
-        result = spy.maybe_get_stats_bytes(interval_ns=1)
-        assert result is not None
-        assert isinstance(result, bytes)
-        assert len(result) > 0
-
-    def test_emitted_bytes_are_decodable_channel_stats_list(self, registry):
-        from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
-        spy = LCMSpy(registry)
-        spy.handle("SENSOR", make_header_t(), timestamp_ns=time.monotonic_ns())
-
-        payload = spy.maybe_get_stats_bytes(interval_ns=1)
-        assert payload is not None
-
-        decoded = channel_stats_list.decode(payload)
+    def test_stats_bytes_decode_as_channel_stats_list(self, acc):
+        spy = LCMSpy(acc, now_ns=T0)
+        acc.record("SENSOR", make_header_t(), T0 + 1)
+        decoded = channel_stats_list.decode(spy.get_stats_bytes(now_ns=T0 + S))
         assert decoded.num_channels == 1
         assert decoded.channels[0].channel == "SENSOR"
-
-    def test_does_not_emit_twice_within_interval(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle("CH", make_header_t(), timestamp_ns=time.monotonic_ns())
-
-        first = spy.maybe_get_stats_bytes(interval_ns=1)  # emits
-        second = spy.maybe_get_stats_bytes(interval_ns=int(1e9))  # interval not elapsed
-        assert first is not None
-        assert second is None
-
-    # Fix 7: configurable interval
-    def test_custom_interval_respected(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle("CH", make_header_t(), timestamp_ns=time.monotonic_ns())
-
-        # 1-nanosecond interval → always emits
-        result = spy.maybe_get_stats_bytes(interval_ns=1)
-        assert result is not None
-
-    def test_long_interval_suppresses_emission(self, registry):
-        spy = LCMSpy(registry)
-        spy.handle("CH", make_header_t(), timestamp_ns=time.monotonic_ns())
-
-        # 1-hour interval → never emits in a test
-        result = spy.maybe_get_stats_bytes(interval_ns=3_600_000_000_000)
-        assert result is None

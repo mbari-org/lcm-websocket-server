@@ -211,26 +211,6 @@ class LCMObserver:
         return len(self._latest) if self._conflate else len(self._fifo)
 
 
-class LCMTimedObserver(LCMObserver):
-    """
-    Observer variant that captures an arrival timestamp for each event.
-    """
-
-    def handle(self, event: Event) -> None:
-        channel, data = event
-        super().handle((channel, (data, monotonic_ns())))
-
-    def _try_get(self):
-        event = super()._try_get()
-        if event is None:
-            return None
-        channel, (data, ts) = event
-        return channel, data, ts
-
-    def drain(self) -> list:
-        return [(channel, data, ts) for channel, (data, ts) in super().drain()]
-
-
 class LCMRepublisher(LogMixin):
     """
     Subscribes to an LCM channel in a background thread and republishes events to subscribers.
