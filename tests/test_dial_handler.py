@@ -4,20 +4,16 @@ Tests for ImageMessageToJPEGHandler and DialHandler.
 
 import inspect
 import json
-import struct
 
 import cv2
 import numpy as np
-import pytest
 from senlcm import image_t
-from stdlcm import header_t
 
 from lcm_websocket_server.apps.dial_proxy import (
     DialHandler,
     DownsamplingMJPEGEncoder,
     ImageMessageToJPEGHandler,
 )
-from lcm_websocket_server.lib.image import PixelFormat
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMObserver, LCMRepublisher
 
 from tests.conftest import make_bgr_image_t, make_header_t
@@ -121,36 +117,14 @@ class TestDialHandlerRouting:
 
 
 # ---------------------------------------------------------------------------
-# Fix 3: EncodeCache on DialHandler
+# Data identity (relied on by the server EncodeCache)
 # ---------------------------------------------------------------------------
 
-class TestDialHandlerEncodeCache:
-    def _make_counting_handler(self, image_handler, json_handler):
-        encode_calls: list[str] = []
-
-        class CountingDialHandler(DialHandler):
-            def _encode_image_t(self_inner, channel, data):
-                encode_calls.append("image")
-                return super()._encode_image_t(channel, data)
-
-        return CountingDialHandler(image_handler, json_handler), encode_calls
-
-    def test_second_image_call_with_same_object_hits_cache(
-        self, image_handler, json_handler
-    ):
-        handler, calls = self._make_counting_handler(image_handler, json_handler)
-        data = make_bgr_image_t()
-
-        r1 = handler.handle("CAM", data)
-        r2 = handler.handle("CAM", data)  # same object → cache hit
-
-        assert r1 == r2
-        assert len(calls) == 1, f"Expected 1 encode, got {len(calls)}"
-
+class TestDataIdentity:
     def test_multiple_subscribers_share_same_data_object(self):
         """
         When two connections subscribe to the same channel, inject() puts the
-        same data object into both queues, so the second call hits the cache.
+        same data object into both queues, so the server cache can share one encode.
         """
         r = LCMRepublisher(".*")
         obs1, obs2 = LCMObserver(), LCMObserver()
@@ -163,3 +137,11 @@ class TestDialHandlerEncodeCache:
         _, data2 = obs2.get_nowait()
 
         assert data1 is data2, "Both queues must hold the same bytes object"
+
+
+class TestHeavyRouting:
+    def test_image_t_is_heavy(self, dial_handler):
+        assert dial_handler.is_heavy("CAM", make_bgr_image_t()) is True
+
+    def test_other_types_are_light(self, dial_handler):
+        assert dial_handler.is_heavy("NAV", make_header_t()) is False

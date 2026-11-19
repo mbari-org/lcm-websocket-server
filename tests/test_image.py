@@ -15,11 +15,9 @@ from lcm_websocket_server.lib.image import (
     RGBDecoder,
     UnsupportedPixelFormatError,
     get_decoder,
-    get_encoder,
 )
 from lcm_websocket_server.apps.dial_proxy import (
     DownsamplingMJPEGEncoder,
-    ImageMessageToJPEGHandler,
 )
 
 W, H = 16, 12  # small enough to be fast; large enough to be non-trivial

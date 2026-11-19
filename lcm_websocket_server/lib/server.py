@@ -1,4 +1,6 @@
 import asyncio
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -7,7 +9,11 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 from websockets.frames import CloseCode
 
-from lcm_websocket_server.lib.handler import LCMWebSocketHandler
+from lcm_websocket_server.lib.handler import (
+    DEFAULT_CACHE_DEPTH,
+    EncodeCache,
+    LCMWebSocketHandler,
+)
 from lcm_websocket_server.lib.lcm_utils.pubsub import (
     OBSERVER_QUEUE_MAXSIZE,
     InvalidChannelRegex,
@@ -20,6 +26,11 @@ from lcm_websocket_server.lib.log import LogMixin
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 # WebSocket close reasons are limited to 123 bytes.
 _MAX_CLOSE_REASON = 120
+
+# Light work (JSON) holds the GIL, so a few threads suffice to keep the loop free.
+DEFAULT_LIGHT_WORKERS = 4
+# Heavy work (OpenCV) releases the GIL and parallelises across cores.
+DEFAULT_HEAVY_WORKERS = min(8, os.cpu_count() or 1)
 
 
 @dataclass(frozen=True)
@@ -66,6 +77,9 @@ class LCMWebSocketServer(LogMixin):
         spy_registry: LCMTypeRegistry | None = None,
         observer_queue_maxsize: int = OBSERVER_QUEUE_MAXSIZE,
         spy_emit_interval_ns: int = 1_000_000_000,
+        light_workers: int = DEFAULT_LIGHT_WORKERS,
+        heavy_workers: int = DEFAULT_HEAVY_WORKERS,
+        encode_cache_depth: int = DEFAULT_CACHE_DEPTH,
     ):
         self._host = host
         self._port = port
@@ -77,6 +91,10 @@ class LCMWebSocketServer(LogMixin):
         self._spy_accumulator = (
             SpyAccumulator(spy_registry, window_ns=spy_emit_interval_ns) if spy_registry is not None else None
         )
+
+        self._cache = EncodeCache(encode_cache_depth)
+        self._light_executor = ThreadPoolExecutor(light_workers, thread_name_prefix="lws-light")
+        self._heavy_executor = ThreadPoolExecutor(heavy_workers, thread_name_prefix="lws-heavy")
 
         self._server = None
 
@@ -138,12 +156,19 @@ class LCMWebSocketServer(LogMixin):
 
     async def _encode(self, channel: str, data: bytes):
         """
-        Encode a message for sending. handler.handle() runs in a worker thread so
-        CPU-intensive work does not block the event loop. Errors are logged and
-        yield None.
+        Encode a message for sending, at most once per message across all clients.
+        Cache hits are served on the loop without a thread hop.
+        """
+        return await self._cache.get_or_encode(channel, data, lambda: self._run_handler(channel, data))
+
+    async def _run_handler(self, channel: str, data: bytes):
+        """
+        Run handler.handle() on the appropriate worker pool so CPU-intensive work
+        does not block the event loop. Errors are logged and yield None.
         """
         try:
-            return await asyncio.to_thread(self._handler.handle, channel, data)
+            executor = self._heavy_executor if self._handler.is_heavy(channel, data) else self._light_executor
+            return await asyncio.get_running_loop().run_in_executor(executor, self._handler.handle, channel, data)
         except Exception as e:  # noqa: BLE001 - a bad message must not end the stream
             self.logger.error(f"Error during message handling on channel {channel!r}: {e!r}")
             return None
@@ -208,6 +233,8 @@ class LCMWebSocketServer(LogMixin):
         finally:
             if self._spy_accumulator is not None:
                 self._lcm_republisher.remove_tap(self._spy_accumulator.record)
+            self._light_executor.shutdown(wait=False, cancel_futures=True)
+            self._heavy_executor.shutdown(wait=False, cancel_futures=True)
 
     def close(self):
         """

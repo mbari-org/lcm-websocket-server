@@ -4,14 +4,10 @@ Tests for JSONHandler.
 
 import inspect
 import json
-import queue
 
-import pytest
 from stdlcm import header_t
 
-from lcmutils import LCMTypeRegistry
 
-from lcm_websocket_server.apps.json_proxy import JSONHandler
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMObserver, LCMRepublisher
 
 from tests.conftest import make_header_t
@@ -92,53 +88,10 @@ class TestJSONHandlerOutput:
 
 
 # ---------------------------------------------------------------------------
-# Fix 3: Encode cache
+# Data identity (relied on by the server EncodeCache)
 # ---------------------------------------------------------------------------
 
-class TestJSONHandlerEncodeCache:
-    def _make_counting_handler(self, registry: LCMTypeRegistry) -> tuple[JSONHandler, list]:
-        """Return a JSONHandler subclass that records how many times _decode runs."""
-        calls: list[int] = []
-
-        class CountingJSONHandler(JSONHandler):
-            def _decode(self_inner, data):
-                calls.append(1)
-                return super()._decode(data)
-
-        return CountingJSONHandler(registry), calls
-
-    def test_second_call_with_same_object_hits_cache(self, registry):
-        handler, calls = self._make_counting_handler(registry)
-        data = make_header_t(sequence=1)
-
-        result1 = handler.handle("CH", data)
-        result2 = handler.handle("CH", data)  # same object → cache hit
-
-        assert result1 == result2
-        assert len(calls) == 1, f"Expected 1 decode call, got {len(calls)}"
-
-    def test_different_object_same_content_causes_re_encode(self, registry):
-        handler, calls = self._make_counting_handler(registry)
-        data_a = make_header_t(sequence=1)
-        data_b = make_header_t(sequence=1)  # equal content, different object
-        assert data_a is not data_b
-
-        handler.handle("CH", data_a)
-        handler.handle("CH", data_b)
-
-        assert len(calls) == 2, "Different objects must each trigger a decode"
-
-    def test_cache_is_per_channel(self, registry):
-        """Same data object on different channels should encode independently."""
-        handler, calls = self._make_counting_handler(registry)
-        data = make_header_t()
-
-        handler.handle("CHAN_A", data)
-        handler.handle("CHAN_B", data)
-        handler.handle("CHAN_A", data)  # hit
-
-        assert len(calls) == 2, "Expected 2 decodes (one per channel), got {len(calls)}"
-
+class TestDataIdentity:
     def test_republisher_puts_same_object_in_all_queues(self):
         """
         LCMRepublisher must place the exact same bytes object into every

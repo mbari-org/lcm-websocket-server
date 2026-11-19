@@ -17,7 +17,7 @@ from stdlcm import header_t
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher, OBSERVER_QUEUE_MAXSIZE
 from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
-from lcm_websocket_server.lib.handler import EncodeCache, LCMWebSocketHandler
+from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, UnsupportedPixelFormatError, get_decoder
 from lcm_websocket_server.lib.log import LogMixin
 from lcm_websocket_server.lib.server import LCMWebSocketServer
@@ -49,6 +49,9 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
             decoder = decoder_cls(width, height)
             self._decoder_cache[key] = decoder
         return decoder
+
+    def is_heavy(self, channel: str, data: bytes) -> bool:
+        return True
 
     def handle(self, channel: str, data: Union[bytes, image_t]) -> Optional[bytes]:
         # Accept either raw bytes or a pre-decoded image_t object.
@@ -101,7 +104,7 @@ class DownsamplingMJPEGEncoder(MJPEGEncoder):
         return super().encode(image)
 
 
-class DialHandler(LogMixin):
+class DialHandler(LCMWebSocketHandler, LogMixin):
     """
     Handler for messages as preferred by Dial.
 
@@ -110,9 +113,6 @@ class DialHandler(LogMixin):
 
     The image handler generates a JPEG image from the `image_t` message, prepends the original LCM message header and channel name, and sends the result as a binary frame over the WebSocket.
     The JSON handler generates a JSON string from the LCM message, and sends the result as a text frame over the WebSocket.
-
-    Results are cached per channel keyed by data object identity so that when
-    multiple clients subscribe to the same channel the encode work is done once.
     """
 
     IMAGE_T_FINGERPRINT = image_t._get_packed_fingerprint()
@@ -120,7 +120,6 @@ class DialHandler(LogMixin):
     def __init__(self, image_handler: ImageMessageToJPEGHandler, json_handler: JSONHandler):
         self._image_handler = image_handler
         self._json_handler = json_handler
-        self._cache = EncodeCache()
 
     def _encode_image_t(self, channel: str, data: bytes) -> Optional[bytes]:
         """
@@ -157,21 +156,13 @@ class DialHandler(LogMixin):
 
         return header_bytes + channel_name_utf8 + jpeg_bytes
 
+    def is_heavy(self, channel: str, data: bytes) -> bool:
+        return data[:8] == DialHandler.IMAGE_T_FINGERPRINT
+
     def handle(self, channel: str, data: bytes) -> Optional[Union[bytes, str]]:
-        cached = self._cache.get(channel, data)
-        if cached is not None:
-            return cached
-
-        fingerprint = data[:8]
-        if fingerprint == DialHandler.IMAGE_T_FINGERPRINT:
-            response = self._encode_image_t(channel, data)
-        else:
-            response = self._json_handler.handle(channel, data)
-
-        if response is not None:
-            self._cache.put(channel, data, response)
-
-        return response
+        if data[:8] == DialHandler.IMAGE_T_FINGERPRINT:
+            return self._encode_image_t(channel, data)
+        return self._json_handler.handle(channel, data)
 
 
 async def run(

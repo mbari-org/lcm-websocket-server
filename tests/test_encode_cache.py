@@ -1,114 +1,99 @@
 """
-Tests for EncodeCache.
+Tests for the loop-confined, single-flight EncodeCache.
 """
 
-import threading
+import asyncio
 
 import pytest
 
 from lcm_websocket_server.lib.handler import EncodeCache
 
 
-class TestEncodeCacheHitAndMiss:
-    def test_cache_miss_on_first_call(self):
-        cache = EncodeCache()
-        data = b"hello"
-        assert cache.get("CH", data) is None
+class Encoder:
+    """Counts calls; optionally blocks until released to simulate a slow encode."""
 
-    def test_cache_hit_after_put(self):
-        cache = EncodeCache()
-        data = b"hello"
-        result = b"encoded"
-        cache.put("CH", data, result)
-        assert cache.get("CH", data) is result  # same object
+    def __init__(self, result="encoded", gate: asyncio.Event | None = None):
+        self.calls = 0
+        self.result = result
+        self.gate = gate
 
-    def test_cache_hit_uses_identity_not_equality(self):
-        """Two bytes objects with identical content but different identities are
-        different cache keys.
-
-        LCM's encode() always allocates a new bytes object, making it a reliable
-        source of same-content, different-identity pairs.
-        """
-        from stdlcm import header_t
-
-        msg = header_t()
-        msg.sequence = 42
-        data_a = msg.encode()
-        data_b = msg.encode()  # same content, new allocation
-        assert data_a == data_b, "Sanity: content must be equal"
-        assert data_a is not data_b, "LCM encode() must return fresh bytes each call"
-
-        result = b"encoded"
-        cache = EncodeCache()
-        cache.put("CH", data_a, result)
-
-        # data_a → hit
-        assert cache.get("CH", data_a) is result
-        # data_b has equal content but a different identity → miss
-        assert cache.get("CH", data_b) is None
-
-    def test_cache_is_per_channel(self):
-        cache = EncodeCache()
-        data = b"payload"
-        result_a = b"result_for_A"
-        result_b = b"result_for_B"
-
-        cache.put("CHAN_A", data, result_a)
-        cache.put("CHAN_B", data, result_b)
-
-        assert cache.get("CHAN_A", data) is result_a
-        assert cache.get("CHAN_B", data) is result_b
-
-    def test_put_overwrites_previous_entry_for_channel(self):
-        cache = EncodeCache()
-        old_data = b"old"
-        new_data = b"new"
-        old_result = b"old_result"
-        new_result = b"new_result"
-
-        cache.put("CH", old_data, old_result)
-        cache.put("CH", new_data, new_result)
-
-        # The old entry is gone; only the new one remains.
-        assert cache.get("CH", old_data) is None
-        assert cache.get("CH", new_data) is new_result
-
-    def test_unknown_channel_returns_none(self):
-        cache = EncodeCache()
-        assert cache.get("NONEXISTENT", b"data") is None
+    async def __call__(self):
+        self.calls += 1
+        if self.gate is not None:
+            await self.gate.wait()
+        return self.result
 
 
-class TestEncodeCacheThreadSafety:
-    def test_concurrent_get_and_put_do_not_corrupt(self):
-        """
-        Many threads doing get/put on the same cache should never raise or
-        return a result belonging to a different channel.
-        """
-        cache = EncodeCache()
-        errors: list[Exception] = []
-        iterations = 500
+class TestHitAndMiss:
+    async def test_second_request_for_same_object_is_cached(self):
+        cache, enc = EncodeCache(), Encoder()
+        data = b"x"
+        assert await cache.get_or_encode("CH", data, enc) == "encoded"
+        assert await cache.get_or_encode("CH", data, enc) == "encoded"
+        assert enc.calls == 1
 
-        def worker(channel: str, data: bytes, result: bytes):
-            for _ in range(iterations):
-                try:
-                    cache.put(channel, data, result)
-                    got = cache.get(channel, data)
-                    # If we get a hit it must be OUR result (not another channel's).
-                    if got is not None and got is not result:
-                        errors.append(ValueError(
-                            f"Cache returned wrong result for {channel}: {got!r}"
-                        ))
-                except Exception as exc:
-                    errors.append(exc)
+    async def test_identity_not_equality(self):
+        cache, enc = EncodeCache(), Encoder()
+        a, b = bytes(bytearray(b"same")), bytes(bytearray(b"same"))
+        assert a == b and a is not b
+        await cache.get_or_encode("CH", a, enc)
+        await cache.get_or_encode("CH", b, enc)
+        assert enc.calls == 2
 
-        threads = [
-            threading.Thread(target=worker, args=(f"CH{i}", f"data{i}".encode(), f"res{i}".encode()))
-            for i in range(8)
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10.0)
+    async def test_per_channel(self):
+        cache, enc = EncodeCache(), Encoder()
+        data = b"x"
+        await cache.get_or_encode("A", data, enc)
+        await cache.get_or_encode("B", data, enc)
+        await cache.get_or_encode("A", data, enc)
+        assert enc.calls == 2
 
-        assert not any(t.is_alive() for t in threads), "Worker thread hung"
-        assert not errors, f"Errors during concurrent cache access: {errors}"
+    async def test_none_result_is_cached(self):
+        """Unencodable messages are not retried for every client."""
+        cache, enc = EncodeCache(), Encoder(result=None)
+        data = b"x"
+        assert await cache.get_or_encode("CH", data, enc) is None
+        assert await cache.get_or_encode("CH", data, enc) is None
+        assert enc.calls == 1
+
+
+class TestDepth:
+    async def test_keeps_recent_messages_per_channel(self):
+        cache, enc = EncodeCache(depth=2), Encoder()
+        msgs = [bytes([i]) for i in range(3)]
+        for m in msgs:
+            await cache.get_or_encode("CH", m, enc)
+        assert enc.calls == 3
+        await cache.get_or_encode("CH", msgs[1], enc)  # still cached
+        await cache.get_or_encode("CH", msgs[2], enc)  # still cached
+        assert enc.calls == 3
+        await cache.get_or_encode("CH", msgs[0], enc)  # evicted
+        assert enc.calls == 4
+
+    def test_invalid_depth(self):
+        with pytest.raises(ValueError):
+            EncodeCache(depth=0)
+
+
+class TestSingleFlight:
+    async def test_concurrent_requests_share_one_encode(self):
+        gate = asyncio.Event()
+        cache, enc = EncodeCache(), Encoder(gate=gate)
+        data = b"x"
+        waiters = [asyncio.create_task(cache.get_or_encode("CH", data, enc)) for _ in range(10)]
+        await asyncio.sleep(0.01)
+        gate.set()
+        assert await asyncio.gather(*waiters) == ["encoded"] * 10
+        assert enc.calls == 1
+
+    async def test_cancelling_one_waiter_does_not_cancel_the_encode(self):
+        gate = asyncio.Event()
+        cache, enc = EncodeCache(), Encoder(gate=gate)
+        data = b"x"
+        first = asyncio.create_task(cache.get_or_encode("CH", data, enc))
+        second = asyncio.create_task(cache.get_or_encode("CH", data, enc))
+        await asyncio.sleep(0.01)
+        first.cancel()
+        gate.set()
+        assert await second == "encoded"
+        assert enc.calls == 1

@@ -8,7 +8,7 @@ from typing import List, Optional
 from lcmutils import LCMType, LCMTypeRegistry
 
 from lcm_websocket_server.lib.server import LCMWebSocketServer
-from lcm_websocket_server.lib.handler import EncodeCache, LCMWebSocketHandler
+from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher, OBSERVER_QUEUE_MAXSIZE
 from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
@@ -21,15 +21,11 @@ logger = get_logger("lcm-websocket-json-proxy")
 
 class JSONHandler(LCMWebSocketHandler, LogMixin):
     """
-    Handler that converts LCM messages to JSON.
-
-    Results are cached per channel keyed by data object identity so that when
-    multiple clients subscribe to the same channel the encode work is done once.
+    Handler that converts LCM messages to JSON. Stateless and thread-safe.
     """
 
     def __init__(self, lcm_type_registry: LCMTypeRegistry):
         self._lcm_type_registry = lcm_type_registry
-        self._cache = EncodeCache()
 
     def _decode(self, data: bytes) -> Optional[LCMType]:
         """
@@ -57,10 +53,6 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
             return None
 
     def handle(self, channel: str, data: bytes) -> Optional[str]:
-        cached = self._cache.get(channel, data)
-        if cached is not None:
-            return cached
-
         # Decode the LCM message
         event = self._decode(data)
         if event is None:
@@ -70,9 +62,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
         fingerprint_hex = data[:8].hex()
 
         # Encode the event as JSON
-        result = encode_event_json(channel, fingerprint_hex, event)
-        self._cache.put(channel, data, result)
-        return result
+        return encode_event_json(channel, fingerprint_hex, event)
 
 
 async def run(

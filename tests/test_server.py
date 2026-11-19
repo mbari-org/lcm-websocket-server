@@ -7,9 +7,7 @@ via LCMRepublisher.inject().  No network daemon is required.
 """
 
 import asyncio
-import inspect
 import json
-import queue
 import threading
 import time
 
@@ -20,13 +18,11 @@ from stdlcm import header_t
 
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.lcm_utils.pubsub import (
-    LCMObserver,
     LCMRepublisher,
-    OBSERVER_QUEUE_MAXSIZE,
 )
 from lcm_websocket_server.lib.server import ClientRequest, LCMWebSocketServer
 
-from tests.conftest import free_port, make_bgr_image_t, make_header_t
+from tests.conftest import free_port, make_header_t
 
 
 # ---------------------------------------------------------------------------
@@ -543,3 +539,52 @@ class TestSpyChannel:
             republisher.inject("NAV", make_header_t(sequence=3))
             msg = json.loads(await recv(ws))
             assert msg["channel"] == "NAV"
+
+
+# ---------------------------------------------------------------------------
+# Shared encoding and worker pools
+# ---------------------------------------------------------------------------
+
+class TestSharedEncoding:
+    async def test_message_encoded_once_for_many_clients(self, server_factory, republisher: LCMRepublisher):
+        """Concurrent clients must share one encode per message (no thundering herd)."""
+        calls = []
+
+        class SlowCountingHandler(LCMWebSocketHandler):
+            def handle(self, channel, data):
+                calls.append(data)
+                time.sleep(0.05)  # long enough that all clients request concurrently
+                return json.dumps({"sequence": header_t.decode(data).sequence})
+
+        _, port = await server_factory(SlowCountingHandler())
+        url = f"ws://localhost:{port}/"
+        clients = [await websockets.connect(url) for _ in range(8)]
+        try:
+            await asyncio.sleep(0.05)
+            republisher.inject("CH", make_header_t(sequence=5))
+            msgs = await asyncio.gather(*(recv(ws) for ws in clients))
+            assert all(json.loads(m)["sequence"] == 5 for m in msgs)
+            assert len(calls) == 1
+        finally:
+            await asyncio.gather(*(ws.close() for ws in clients))
+
+    async def test_heavy_messages_run_on_heavy_pool(self, server_factory, republisher: LCMRepublisher):
+        thread_names = {}
+
+        class RoutingHandler(LCMWebSocketHandler):
+            def is_heavy(self, channel, data):
+                return channel == "CAM"
+
+            def handle(self, channel, data):
+                thread_names[channel] = threading.current_thread().name
+                return channel
+
+        _, port = await server_factory(RoutingHandler())
+        async with websockets.connect(f"ws://localhost:{port}/") as ws:
+            await asyncio.sleep(0.05)
+            republisher.inject("CAM", b"x")
+            republisher.inject("NAV", b"y")
+            await recv(ws)
+            await recv(ws)
+        assert thread_names["CAM"].startswith("lws-heavy")
+        assert thread_names["NAV"].startswith("lws-light")

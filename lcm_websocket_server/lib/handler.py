@@ -1,55 +1,72 @@
-import threading
+import asyncio
 from abc import ABC, abstractmethod
-from typing import Optional, Union
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+Payload = str | bytes | bytearray | memoryview
+
+DEFAULT_CACHE_DEPTH = 4
 
 
 class EncodeCache:
     """
-    Per-channel single-entry cache keyed by data object identity.
+    Single-flight cache of encoded payloads, confined to one event loop.
 
-    Shared across all connections on the same handler instance so that when N
-    clients subscribe to the same channel, the encode work is done once and the
-    result is reused for the remaining N-1 clients.
+    Keyed by channel and by the identity of the raw data object: the
+    republisher hands the same bytes object to every subscriber, so identity
+    identifies "this exact message". The first request for a message starts
+    the encode; concurrent requests await the same future, so each message is
+    encoded at most once regardless of the number of clients.
 
-    Thread-safe: handle() may be called concurrently from multiple asyncio
-    to_thread workers.
+    Keeps the `depth` most recent messages per channel so clients that lag a
+    few messages behind still hit the cache.
     """
 
-    def __init__(self):
-        self._lock = threading.Lock()
-        # channel -> (original data object, encoded result)
-        self._cache: dict[str, tuple[bytes, object]] = {}
+    def __init__(self, depth: int = DEFAULT_CACHE_DEPTH):
+        if depth < 1:
+            raise ValueError("depth must be >= 1")
+        self._depth = depth
+        # channel -> id(data) -> (data, future)
+        self._entries: dict[str, OrderedDict[int, tuple[bytes, asyncio.Future]]] = {}
 
-    def get(self, channel: str, data: bytes) -> Optional[object]:
+    async def get_or_encode(self, channel: str, data: bytes, encode: Callable[[], Awaitable[Any]]) -> Any:
         """
-        Return the cached result for (channel, data) if available, else None.
+        Return the encoded result for (channel, data), starting `encode()` only
+        if no request for this message is cached or in flight.
 
-        Identity comparison (`is`) is used intentionally: the same raw bytes
-        object is placed into every subscriber queue by LCMRepublisher._handle,
-        so object identity reliably identifies "this exact message".
+        Cancelling one caller does not cancel the shared encode.
         """
-        with self._lock:
-            entry = self._cache.get(channel)
-            if entry is not None and entry[0] is data:
-                return entry[1]
-            return None
+        per_channel = self._entries.get(channel)
+        if per_channel is None:
+            per_channel = self._entries[channel] = OrderedDict()
 
-    def put(self, channel: str, data: bytes, result: object) -> None:
-        """Store an encoded result for (channel, data)."""
-        with self._lock:
-            self._cache[channel] = (data, result)
+        key = id(data)
+        entry = per_channel.get(key)
+        if entry is not None and entry[0] is data:
+            future = entry[1]
+        else:
+            future = asyncio.ensure_future(encode())
+            per_channel[key] = (data, future)
+            while len(per_channel) > self._depth:
+                per_channel.popitem(last=False)
+
+        if future.done():
+            return future.result()
+        return await asyncio.shield(future)
 
 
 class LCMWebSocketHandler(ABC):
     """
     LCM WebSocket handler interface.
 
-    Implementations must be synchronous. The server calls handle() via
-    asyncio.to_thread() to keep CPU-intensive work off the event loop.
+    Implementations must be synchronous and thread-safe: the server runs
+    handle() in worker threads, possibly concurrently for different messages.
+    The server caches results, so handle() is called at most once per message.
     """
 
     @abstractmethod
-    def handle(self, channel: str, data: bytes) -> Optional[Union[str, bytes, bytearray, memoryview]]:
+    def handle(self, channel: str, data: bytes) -> Payload | None:
         """
         Handle an LCM message.
 
@@ -61,3 +78,10 @@ class LCMWebSocketHandler(ABC):
             Response to be sent to the WebSocket client, or None to not send a response.
         """
         raise NotImplementedError
+
+    def is_heavy(self, channel: str, data: bytes) -> bool:
+        """
+        Whether handling this message is CPU-heavy native work (e.g. image
+        encoding) that should run on the separate heavy worker pool.
+        """
+        return False
