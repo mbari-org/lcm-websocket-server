@@ -18,11 +18,21 @@ pip install lcm-websocket-server
 pip install .
 ```
 
-Or with the `image` extension:
+Or with optional extras:
 
 ```bash
-pip install ".[image]"
+pip install ".[image]"            # Dial proxy (OpenCV)
+pip install ".[orjson,uvloop]"    # faster JSON encoding and event loop
 ```
+
+For development, use [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync --all-extras
+uv run pytest
+```
+
+The tests need the CoMPAS LCM Python types (`stdlcm`, `senlcm`, ...) on `PYTHONPATH`.
 
 ## :rocket: Usage
 
@@ -47,15 +57,30 @@ The `lcm_packages` argument is the name of the package (or comma-separated list 
 
 #### Tuning Options
 
-Both proxy commands accept optional tuning flags:
+Both proxy commands accept these options:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--queue-size N` | 64 | Max messages buffered per connection before the oldest are dropped |
-| `--poll-interval S` | 0.1 | Sleep duration (seconds) when the message queue is empty |
 | `--spy-interval S` | 1.0 | LCM spy stats emission interval (seconds) |
+| `--compression {deflate,none}` | `deflate` (JSON), `none` (Dial) | WebSocket permessage-deflate. Saves bandwidth for JSON on slow links at a CPU cost per client; useless for JPEG |
+| `--uvloop` | off | Use the uvloop event loop (requires the `uvloop` extra) |
+| `--processes N` | 1 | Run N server processes on the same port (`SO_REUSEPORT`) to use more than one core |
 
-Increase `--queue-size` if you see drop warnings in the logs and your consumer can tolerate a larger backlog. Decrease `--poll-interval` for lower latency at the cost of slightly higher CPU use.
+The Dial proxy also accepts:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--max-fps F` | no cap | Max transcoded frames per second per image channel |
+| `--image-workers N` | min(8, cores) | Threads for image transcoding |
+
+Delivery is event-driven; `--poll-interval` is accepted for compatibility but ignored.
+
+If drop warnings appear in the logs, the client is not keeping up. Options: connect with `?conflate=1` (see below), increase `--queue-size`, or subscribe to fewer channels.
+
+Each message is encoded once and shared by all clients. Encoding runs in worker threads: JSON on a small pool and images on a separate pool, so image bursts do not delay JSON. One process is bound to roughly one core for JSON work; with `--processes N` each process has its own LCM subscription, encode cache and spy statistics.
+
+For faster JSON encoding, install the `orjson` extra (about 2x faster than the standard library path).
 
 **Example: `compas_lcmtypes`**
 
@@ -114,18 +139,31 @@ Clients can specify an optional `update_interval_ms` query parameter in the WebS
 const ws = new WebSocket('ws://localhost:8765/.*?update_interval_ms=500');
 ```
 
-This will cause the latest message for each subscribed channel to be sent to the client every 500 milliseconds.
+This will cause the latest message for each subscribed channel to be sent to the client every 500 milliseconds. Between ticks only the latest message per channel is kept, so low-rate channels are never crowded out by high-rate ones.
+
+#### Conflation
+
+By default each connection buffers up to `--queue-size` messages and drops the oldest when full, regardless of channel. A client that cannot keep up with every message can instead request only the latest message per channel:
+```javascript
+const ws = new WebSocket('ws://localhost:8765/.*?conflate=1');
+```
+
+Messages are still delivered as soon as possible, but a busy channel can no longer evict a quiet one.
+
+#### Invalid Requests
+
+A connection with an invalid channel regex (or one longer than 1024 characters) or an invalid `update_interval_ms` is closed with code 1008 (policy violation) and a reason describing the problem.
 
 ## :bar_chart: LCM Spy Virtual Channel
 
-The server provides a **virtual channel** called `LWS_LCM_SPY` that publishes per-channel statistics at 1 Hz on a per-connection basis. Each WebSocket client gets its own stats stream, computed from live traffic observed during that connection.
+The server provides a **virtual channel** called `LWS_LCM_SPY` that publishes per-channel statistics at 1 Hz (`--spy-interval`) to every client whose channel regex matches it. Statistics are counted once per message for all traffic the server receives, independent of any client's queue. Each client's view starts when it connects: message counts are since connect, and channels appear once they have received a message since then.
 
 ### Channel Statistics
 
 The virtual channel publishes a `channel_stats_list` message containing statistics for each active channel:
 - **Hz**: Message frequency
 - **Bandwidth**: Bytes per second
-- **Jitter**: Variation in message intervals
+- **Jitter**: Spread (max - min) of inter-arrival intervals over the last spy interval
 - **Message count**: Total messages received
 - **Undecodable count**: Messages that couldn't be decoded
 
@@ -138,7 +176,7 @@ Connect to the spy channel using the channel name in the WebSocket path:
 const ws = new WebSocket('ws://localhost:8765/LWS_LCM_SPY');
 
 ws.onmessage = (ev) => {
-    const stats = JSON.parse(ev.event);
+    const stats = JSON.parse(ev.data).event;
     console.log('Channel stats:', stats.channels);
 };
 ```
