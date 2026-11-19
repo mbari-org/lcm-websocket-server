@@ -380,7 +380,7 @@ wheels = [
 
 [[package]]
 name = "lcm-websocket-server"
-version = "0.9.0rc2"
+version = "0.9.0"
 source = { editable = "." }
 dependencies = [
     { name = "lcm" },
