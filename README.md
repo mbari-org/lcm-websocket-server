@@ -23,7 +23,10 @@ Or with optional extras:
 ```bash
 pip install ".[image]"            # Dial proxy (OpenCV)
 pip install ".[orjson,uvloop]"    # faster JSON encoding and event loop
+pip install ".[lcmtypes]"         # CoMPAS and MOLARS LCM types
 ```
+
+The `lcmtypes` extra installs [compas-lcmtypes](https://github.com/CoMPASLab/compas_lcmtypes) and [molars-lcmtypes](https://github.com/CoMPASLab/molars_lcmtypes), the default types for the Dial proxy and the Docker image. Any other Python package of lcm-gen types works as well (see `--lcm-packages`).
 
 See [Development](#wrench-development) for working on the project itself.
 
@@ -111,9 +114,7 @@ To run the server locally on port 8765 and republish messages on all channels (J
 lcm-websocket-dial-proxy --host localhost --port 8765 --channel '.*' --quality 75 --scale 1.0
 ```
 
-The Dial proxy depends on the `molars-lcmtypes` Python package to be installed. This package is not available on PyPI, so it must be built and installed manually; see the [MolaRS repository](https://github.com/CoMPASLab/molars/) for more info.
-
-The `Dockerfile.dial` file can be used to build the image with the `molars-lcmtypes` package installed. For this, the Python wheel `molars_lcmtypes-0.0.0-py3-none-any.whl` must be placed at the repository root before building the image.
+By default the Dial proxy discovers types from `compas_lcmtypes` and `molars_lcmtypes` (install the `lcmtypes` extra) and transcodes messages of the LCM type `senlcm.image_t`. Use `--lcm-packages` and `--image-type` to change either; the image type is matched by its LCM name regardless of the Python package prefix it was generated with.
 
 ### Connecting to the Server
 
@@ -228,41 +229,61 @@ The server has no authentication or encryption. When it is reachable beyond a tr
 
 ## :whale: Docker
 
-### Build
+One image, [`mbari/lcm-websocket-server`](https://hub.docker.com/r/mbari/lcm-websocket-server), runs either proxy. It includes the `image`, `orjson`, `uvloop` and `lcmtypes` extras, so the CoMPAS and MOLARS types are available without mounting anything.
 
-A Docker image to run the `lcm-websocket-server` can be built with:
+### Tags
 
-```bash
-./scripts/docker_build.sh
-```
+Images are built and pushed by CI after each release:
 
-This will create the `mbari/lcm-websocket-server` image.
+| Tag | Source |
+|-----|--------|
+| `X.Y.Z`, `X.Y`, `latest` | Releases from `main` |
+| `X.Y.Z-rc.N`, `develop` | Prereleases from `develop` |
 
 ### Run
 
-The container can be run with:
-
 ```bash
-docker run \
-    --name lcm-websocket-server \
-    --rm \
-    -e HOST=0.0.0.0 \
-    -e PORT=8765 \
-    -e CHANNEL=".*" \
-    -v /path/to/your_lcm_types_package:/app/your_lcm_types_package \
-    -e LCM_PACKAGES=your_lcm_types_package \
-    --network=host \
-    -d \
+# JSON proxy for all channels
+docker run -d --name lcm-websocket-server --network=host mbari/lcm-websocket-server
+
+# Dial proxy, downscaled JPEGs capped at 5 fps per camera
+docker run -d --name lcm-websocket-dial --network=host \
+    -e PROXY=dial -e ARGS="--scale 0.5 --quality 60 --max-fps 5" \
     mbari/lcm-websocket-server
 ```
 
-Note that the `HOST`, `PORT`, and `CHANNEL` environment variables specified above are the defaults for the `mbari/lcm-websocket-server` image. These can be omitted if the defaults are acceptable.
+Run with `--network=host` so LCM's UDP multicast reaches the container.
 
-Extra command-line flags can be passed with the `ARGS` environment variable, e.g. `-e ARGS="--uvloop --processes 4 -vv"`. The image includes the `orjson` and `uvloop` extras and a `HEALTHCHECK` that polls `/healthz`; if `HOST` is set to an address other than `0.0.0.0` or `127.0.0.1`, the health check cannot reach it.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PROXY` | `json` | `json` or `dial` |
+| `HOST` | `0.0.0.0` | Address to listen on |
+| `PORT` | `8765` | Port to listen on |
+| `CHANNEL` | `.*` | LCM channel regex to subscribe to |
+| `LCM_PACKAGES` | `compas_lcmtypes,molars_lcmtypes` | Python packages to discover LCM types from |
+| `ARGS` | | Extra flags, e.g. `--uvloop --processes 4 -vv` |
 
-The `LCM_PACKAGES` environment variable should be set to the name of the package (or comma-separated list of packages) that contains the LCM Python message definitions. The `/app` directory is included in the `PYTHONPATH` so that any packages mounted there (as shown with `-v` above) can be imported.
+Flags can also be passed as container arguments (`docker run ... mbari/lcm-websocket-server --uvloop`), and any other command runs as given (`docker run -it ... mbari/lcm-websocket-server bash`).
 
-It's recommended to run with `--network=host` to avoid issues with LCM over UDP. This will allow the container to use the host's network stack.
+To use other LCM types, mount the package under `/app`, which is on `PYTHONPATH`, and list it in `LCM_PACKAGES`:
+
+```bash
+docker run -d --network=host \
+    -v /path/to/my_lcmtypes:/app/my_lcmtypes:ro \
+    -e LCM_PACKAGES=my_lcmtypes \
+    mbari/lcm-websocket-server
+```
+
+The image has a `HEALTHCHECK` on `/healthz`; it cannot reach the server if `HOST` is set to an address other than `0.0.0.0` or `127.0.0.1`.
+
+### Build
+
+The build is defined in `docker-bake.hcl` and installs exactly the dependencies in `uv.lock`:
+
+```bash
+docker buildx bake                                        # builds mbari/lcm-websocket-server:local
+docker/smoke_test.sh mbari/lcm-websocket-server:local     # checks both proxies start and report healthy
+```
 
 ## :wrench: Development
 
@@ -273,10 +294,16 @@ uv run pytest
 uv run ruff check .
 ```
 
-The tests are self-contained: they use LCM types vendored in `tests/lcmtypes` and the in-process `memq://` LCM provider, so no LCM network or MolaRS install is needed. CI runs lint and tests on Python 3.11 to 3.14.
+The tests use the `compas-lcmtypes` package and the in-process `memq://` LCM provider, so no LCM network is needed. CI runs lint and tests on Python 3.11 to 3.14 and smoke-tests the Docker image.
 
-Before a release, run the load benchmarks and compare against [benchmarks/README.md](benchmarks/README.md) to catch performance regressions. They need the full CoMPAS LCM types on `PYTHONPATH`:
+Before a release, run the load benchmarks and compare against [benchmarks/README.md](benchmarks/README.md) to catch performance regressions:
 
 ```bash
 uv run python benchmarks/load.py all
 ```
+
+### Releases
+
+[python-semantic-release](https://python-semantic-release.readthedocs.io/) runs in CI after lint, tests and build pass. It derives the version from [conventional commits](https://www.conventionalcommits.org/), updates `pyproject.toml`, `uv.lock` and `CHANGELOG.md`, tags the release, and creates a GitHub release with the wheel and sdist. Pushes to `main` make releases and pushes to `develop` make `-rc.N` prereleases; each release also publishes the Docker image. Nothing is published to PyPI.
+
+Publishing the image needs two repository secrets: `DOCKERHUB_USERNAME`, and `DOCKERHUB_TOKEN`, a Docker Hub access token with read and write access to `mbari/lcm-websocket-server`.
