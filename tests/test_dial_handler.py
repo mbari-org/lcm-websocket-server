@@ -7,6 +7,7 @@ import json
 
 import cv2
 import numpy as np
+import pytest
 from senlcm import image_t
 
 from lcm_websocket_server.apps.dial_proxy import (
@@ -146,3 +147,51 @@ class TestHeavyRouting:
 
     def test_other_types_are_light(self, dial_handler):
         assert dial_handler.is_heavy("NAV", make_header_t()) is False
+
+
+class TestImageRateLimit:
+    MS = 1_000_000
+
+    def _due_times(self, handler, arrivals_ms):
+        return [t for t in arrivals_ms if handler._image_due("CAM", t * self.MS)]
+
+    def test_no_cap_passes_everything(self, image_handler, json_handler):
+        h = DialHandler(image_handler, json_handler)
+        assert self._due_times(h, range(0, 1000, 10)) == list(range(0, 1000, 10))
+
+    def test_cap_below_source_rate(self, image_handler, json_handler):
+        h = DialHandler(image_handler, json_handler, max_image_fps=5)  # 10 Hz source
+        assert self._due_times(h, range(0, 1000, 100)) == [0, 200, 400, 600, 800]
+
+    def test_fractional_ratio_averages_to_cap(self, image_handler, json_handler):
+        h = DialHandler(image_handler, json_handler, max_image_fps=7)  # 10 Hz source
+        passed = self._due_times(h, range(0, 10_000, 100))
+        assert 68 <= len(passed) <= 72
+
+    def test_cap_equal_to_jittery_source_passes_all(self, image_handler, json_handler):
+        h = DialHandler(image_handler, json_handler, max_image_fps=10)
+        arrivals = [i * 100 + (3 if i % 2 else -3) for i in range(1, 50)]
+        assert self._due_times(h, arrivals) == arrivals
+
+    def test_channels_limited_independently(self, image_handler, json_handler):
+        h = DialHandler(image_handler, json_handler, max_image_fps=1)
+        assert h._image_due("A", 0) and h._image_due("B", 0)
+        assert not h._image_due("A", 10 * self.MS)
+
+    def test_skipped_frame_returns_none(self, image_handler, json_handler):
+        h = DialHandler(image_handler, json_handler, max_image_fps=0.001)
+        assert h.handle("CAM", make_bgr_image_t()) is not None
+        assert h.handle("CAM", make_bgr_image_t()) is None
+        assert h.handle("NAV", make_header_t()) is not None  # JSON unaffected
+
+    def test_invalid_cap(self, image_handler, json_handler):
+        with pytest.raises(ValueError):
+            DialHandler(image_handler, json_handler, max_image_fps=0)
+
+
+class TestNoOpResize:
+    def test_scale_one_does_not_resize(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(cv2, "resize", lambda *a, **k: calls.append(1))
+        DownsamplingMJPEGEncoder(scale=1.0).encode(np.zeros((4, 4, 3), np.uint8))
+        assert calls == []

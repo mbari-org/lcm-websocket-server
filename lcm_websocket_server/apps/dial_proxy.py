@@ -3,7 +3,9 @@ LCM WebSocket Proxy Server for the Dial visualization webapp.
 """
 
 import argparse
+import threading
 from io import BytesIO
+from time import monotonic_ns
 
 import cv2
 from lcmlog.event import Header
@@ -104,8 +106,9 @@ class DownsamplingMJPEGEncoder(MJPEGEncoder):
         self._scale = scale
 
     def encode(self, image: ndarray) -> bytes:
-        # Downsample the image
-        image = cv2.resize(image, (0, 0), fx=self._scale, fy=self._scale, interpolation=cv2.INTER_AREA)
+        # Downsample the image (skipped at scale 1.0, where resize is a full-frame copy)
+        if self._scale != 1.0:
+            image = cv2.resize(image, (0, 0), fx=self._scale, fy=self._scale, interpolation=cv2.INTER_AREA)
 
         # Encode the image
         return super().encode(image)
@@ -124,9 +127,43 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
 
     IMAGE_T_FINGERPRINT = image_t._get_packed_fingerprint()
 
-    def __init__(self, image_handler: ImageMessageToJPEGHandler, json_handler: JSONHandler):
+    def __init__(
+        self,
+        image_handler: ImageMessageToJPEGHandler,
+        json_handler: JSONHandler,
+        max_image_fps: float | None = None,
+    ):
+        """
+        Args:
+            image_handler: Converts image_t to JPEG.
+            json_handler: Converts all other messages to JSON.
+            max_image_fps: Optional per-channel cap on transcoded image frames.
+                Frames over the cap are skipped for all clients.
+        """
+        if max_image_fps is not None and max_image_fps <= 0:
+            raise ValueError("max_image_fps must be positive")
         self._image_handler = image_handler
         self._json_handler = json_handler
+        self._image_interval_ns = int(1e9 / max_image_fps) if max_image_fps else 0
+        self._next_image_ns: dict[str, int] = {}
+        self._rate_lock = threading.Lock()
+
+    def _image_due(self, channel: str, now_ns: int) -> bool:
+        """
+        Deadline-based rate limit per channel. Tolerates 10% early arrival so
+        source jitter does not halve the rate when the cap matches the source.
+        """
+        interval = self._image_interval_ns
+        if not interval:
+            return True
+        with self._rate_lock:
+            deadline = self._next_image_ns.get(channel)
+            if deadline is not None and now_ns < deadline - interval // 10:
+                return False
+            # Resume from now after a long gap rather than bursting to catch up.
+            base = now_ns if deadline is None or now_ns - deadline > interval else deadline
+            self._next_image_ns[channel] = base + interval
+            return True
 
     def _encode_image_t(self, channel: str, data: bytes) -> bytes | None:
         """
@@ -168,6 +205,8 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
 
     def handle(self, channel: str, data: bytes) -> bytes | str | None:
         if data[:8] == DialHandler.IMAGE_T_FINGERPRINT:
+            if not self._image_due(channel, monotonic_ns()):
+                return None
             return self._encode_image_t(channel, data)
         return self._json_handler.handle(channel, data)
 
@@ -189,6 +228,7 @@ async def run(
     scale: float = 1.0,
     quality: int = 75,
     image_workers: int = DEFAULT_HEAVY_WORKERS,
+    max_fps: float | None = None,
 ) -> None:
     """
     Run the LCM WebSocket Dial proxy server.
@@ -198,6 +238,7 @@ async def run(
         scale: The scale factor to resize the image by.
         quality: The JPEG quality level. Clamped to the range [0, 100].
         image_workers: Threads for image transcoding.
+        max_fps: Optional per-channel cap on transcoded image frames per second.
     """
     registry = build_registry(DIAL_LCM_PACKAGES, logger)
     if registry is None:
@@ -205,7 +246,7 @@ async def run(
 
     quality = round(max(0, min(quality, 100)))
     jpeg_encoder = DownsamplingMJPEGEncoder(scale=scale, params=[cv2.IMWRITE_JPEG_QUALITY, quality])
-    handler = DialHandler(ImageMessageToJPEGHandler(jpeg_encoder), JSONHandler(registry))
+    handler = DialHandler(ImageMessageToJPEGHandler(jpeg_encoder), JSONHandler(registry), max_image_fps=max_fps)
 
     logger.debug(f"Creating LCM republisher for channel '{options.channel}'")
     republisher = LCMRepublisher(options.channel)
@@ -229,12 +270,20 @@ def main():
     add_server_args(parser, compression_default="none")
     parser.add_argument("--scale", type=float, default=1.0, help="The scale factor to resize the image by. Default: %(default)s")
     parser.add_argument("--quality", type=int, default=75, help="The JPEG quality level, 0-100. Default: %(default)s")
+    parser.add_argument("--max-fps", type=float, default=None, help="Cap on transcoded frames per second per image channel. Default: no cap")
     parser.add_argument("--image-workers", type=int, default=DEFAULT_HEAVY_WORKERS, help="Threads for image transcoding. Default: %(default)s")
     args = parser.parse_args()
 
     options = parse_server_options(args, logger)
     run_app(
-        app_factory(run, options, scale=args.scale, quality=args.quality, image_workers=args.image_workers),
+        app_factory(
+            run,
+            options,
+            scale=args.scale,
+            quality=args.quality,
+            image_workers=args.image_workers,
+            max_fps=args.max_fps,
+        ),
         options,
         logger,
     )
