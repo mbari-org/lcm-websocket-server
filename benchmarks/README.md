@@ -2,10 +2,10 @@
 
 Load and microbenchmarks used to characterize the server under load.
 
-Both scripts need the CoMPAS LCM Python types (`stdlcm`, `senlcm`, `navlcm`, `geolcm`) on `PYTHONPATH`.
+Both scripts use the CoMPAS LCM types from the `lcmtypes` extra.
 
 ```bash
-export PYTHONPATH=/path/to/lcmtypes/python
+uv sync --all-extras
 uv run python benchmarks/load.py all        # or: latency, json-scale, json-rate, dial, slow, periodic
 uv run python benchmarks/encode.py
 ```

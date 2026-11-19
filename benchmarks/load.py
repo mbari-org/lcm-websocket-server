@@ -37,10 +37,10 @@ def _cpu_seconds() -> float:
 
 def _message_builders():
     import numpy as np
-    from geolcm import point_t
-    from navlcm import odometry_t
-    from senlcm import image_t, multibeam_euclidean_t
-    from stdlcm import header_t
+    from compas_lcmtypes.geolcm import point_t
+    from compas_lcmtypes.navlcm import odometry_t
+    from compas_lcmtypes.senlcm import image_t, multibeam_euclidean_t
+    from compas_lcmtypes.stdlcm import header_t
 
     from lcm_websocket_server.lib.image import PixelFormat
 
