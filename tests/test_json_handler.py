@@ -8,6 +8,7 @@ import json
 from stdlcm import header_t
 
 
+from lcm_websocket_server.lib.handler import TextPayload
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMObserver, LCMRepublisher
 
 from tests.conftest import make_header_t
@@ -22,9 +23,9 @@ class TestJSONHandlerInterface:
         """handle() must be a plain def so asyncio.to_thread() can run it."""
         assert not inspect.iscoroutinefunction(json_handler.handle)
 
-    def test_handle_returns_string_not_coroutine(self, json_handler):
+    def test_handle_returns_text_payload(self, json_handler):
         result = json_handler.handle("TEST", make_header_t())
-        assert result is None or isinstance(result, str)
+        assert isinstance(result, TextPayload)
 
     def test_handle_returns_none_for_unknown_type(self, json_handler):
         garbage = b"\x00\x01\x02\x03\x04\x05\x06\x07" + b"not lcm data"

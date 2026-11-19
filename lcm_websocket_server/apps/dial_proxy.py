@@ -112,7 +112,7 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
     The image handler is invoked for `image_t` messages, and the JSON handler is invoked for all other messages.
 
     The image handler generates a JPEG image from the `image_t` message, prepends the original LCM message header and channel name, and sends the result as a binary frame over the WebSocket.
-    The JSON handler generates a JSON string from the LCM message, and sends the result as a text frame over the WebSocket.
+    The JSON handler generates UTF-8 JSON from the LCM message, and sends the result as a text frame over the WebSocket.
     """
 
     IMAGE_T_FINGERPRINT = image_t._get_packed_fingerprint()

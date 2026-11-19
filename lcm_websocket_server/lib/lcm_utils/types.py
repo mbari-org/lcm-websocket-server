@@ -1,69 +1,100 @@
 """
 Utilities for working with LCM types and raw data.
+
+JSON conventions: LCM structs become objects keyed by field name, `bytes`
+become hex strings, and non-finite floats (NaN, +/-inf) become null so the
+output is always valid JSON.
 """
 import json
+import math
 from typing import Any
 
-from lcmutils import LCMType
+try:
+    import orjson
+except ImportError:  # optional extra
+    orjson = None
+
+# type -> tuple of field names for LCM types, or None for non-LCM types
+_LCM_SLOTS: dict[type, tuple[str, ...] | None] = {}
+
+
+def _lcm_slots(tp: type) -> tuple[str, ...] | None:
+    """Field names of an lcm-gen class, cached per type. Cheaper than a Protocol isinstance check."""
+    try:
+        return _LCM_SLOTS[tp]
+    except KeyError:
+        slots = None
+        if hasattr(tp, "_get_packed_fingerprint") and hasattr(tp, "__slots__"):
+            slots = tuple(tp.__slots__)
+        _LCM_SLOTS[tp] = slots
+        return slots
+
+
+def _encode_sequence(values) -> Any:
+    if not values:
+        return []
+    first = type(values[0])
+    # LCM arrays are homogeneous, so primitive arrays can skip per-element dispatch.
+    if first is float:
+        if all(map(math.isfinite, values)):
+            return values
+        return [v if math.isfinite(v) else None for v in values]
+    if first is int or first is str or first is bool:
+        return values
+    return [encode_value(v) for v in values]
 
 
 def encode_value(value: Any) -> Any:
     """
-    Encode a value. 
-    
-    If the value is an LCM event, encode it as a dictionary. If the value is a list, encode each element. Otherwise, return the value.
-    
+    Encode a value into JSON-serializable form.
+
     Args:
         value: Value to encode.
-    
+
     Returns:
         Encoded value.
     """
-    if isinstance(value, LCMType):
-        return encode_event_dict(value)
-    elif isinstance(value, list):
-        return list(map(encode_value, value))
-    elif isinstance(value, dict):
-        return {key: encode_value(value) for key, value in value.items()}
-    elif isinstance(value, bytes):
+    tp = type(value)
+    if tp is float:
+        return value if math.isfinite(value) else None
+    if tp is int or tp is str or tp is bool or value is None:
+        return value
+    if tp is list or tp is tuple:
+        return _encode_sequence(value)
+    if tp is bytes:
         return value.hex()
-    elif isinstance(value, float) and value != value:
-        return None
+    if tp is dict:
+        return {key: encode_value(v) for key, v in value.items()}
+    slots = _lcm_slots(tp)
+    if slots is not None:
+        return {slot: encode_value(getattr(value, slot)) for slot in slots}
     return value
 
 
 def encode_event_dict(event: object) -> dict:
     """
     Encode an LCM event as a dictionary.
-    
+
     Args:
         event: LCM event to encode.
-    
+
     Returns:
         Dictionary representation of the event.
     """
-    event_type = type(event)
-    event_dict = {}
-    
-    for slot in event_type.__slots__:
-        value = getattr(event, slot)
-        value = encode_value(value)
-        
-        event_dict[slot] = value
-
-    return event_dict
+    slots = _lcm_slots(type(event)) or tuple(type(event).__slots__)
+    return {slot: encode_value(getattr(event, slot)) for slot in slots}
 
 
 def encode_event_json(channel: str, fingerprint: str, event: object, **kwargs) -> str:
     """
-    Encode an LCM event as a JSON string.
-    
+    Encode an LCM event as a JSON string using the standard library.
+
     Args:
         channel: Channel of the event.
         fingerprint: Fingerprint of the event.
         event: LCM event to encode.
         **kwargs: Keyword arguments to pass to json.dumps.
-    
+
     Returns:
         JSON string representation of the event.
     """
@@ -72,3 +103,29 @@ def encode_event_json(channel: str, fingerprint: str, event: object, **kwargs) -
         "fingerprint": fingerprint,
         "event": encode_event_dict(event) if event is not None else {}
     }, **kwargs)
+
+
+def _orjson_default(value: Any) -> Any:
+    """orjson fallback for types it does not serialize natively."""
+    if type(value) is bytes:
+        return value.hex()
+    slots = _lcm_slots(type(value))
+    if slots is not None:
+        return {slot: getattr(value, slot) for slot in slots}
+    raise TypeError(f"Type is not JSON serializable: {type(value).__name__}")
+
+
+def encode_event_json_bytes(channel: str, fingerprint: str, event: object) -> bytes:
+    """
+    Encode an LCM event as compact UTF-8 JSON.
+
+    Uses orjson when installed (it walks arrays in C and maps non-finite
+    floats to null natively), otherwise the standard library. Both produce
+    equivalent JSON.
+    """
+    if orjson is not None:
+        return orjson.dumps(
+            {"channel": channel, "fingerprint": fingerprint, "event": event if event is not None else {}},
+            default=_orjson_default,
+        )
+    return encode_event_json(channel, fingerprint, event, separators=(",", ":")).encode()

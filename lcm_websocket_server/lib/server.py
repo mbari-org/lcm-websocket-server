@@ -13,6 +13,7 @@ from lcm_websocket_server.lib.handler import (
     DEFAULT_CACHE_DEPTH,
     EncodeCache,
     LCMWebSocketHandler,
+    TextPayload,
 )
 from lcm_websocket_server.lib.lcm_utils.pubsub import (
     OBSERVER_QUEUE_MAXSIZE,
@@ -174,7 +175,10 @@ class LCMWebSocketServer(LogMixin):
             return None
 
     async def _send(self, websocket: ServerConnection, payload) -> None:
-        await websocket.send(payload)
+        if type(payload) is TextPayload:
+            await websocket.send(payload, text=True)
+        else:
+            await websocket.send(payload)
 
     async def _stream_loop(self, observer: LCMObserver, websocket: ServerConnection):
         """

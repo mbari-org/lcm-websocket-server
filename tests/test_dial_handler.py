@@ -14,6 +14,7 @@ from lcm_websocket_server.apps.dial_proxy import (
     DownsamplingMJPEGEncoder,
     ImageMessageToJPEGHandler,
 )
+from lcm_websocket_server.lib.handler import TextPayload
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMObserver, LCMRepublisher
 
 from tests.conftest import make_bgr_image_t, make_header_t
@@ -76,9 +77,9 @@ class TestDialHandlerRouting:
         result = dial_handler.handle("CAM", make_bgr_image_t())
         assert isinstance(result, bytes)
 
-    def test_non_image_produces_str_json_frame(self, dial_handler):
+    def test_non_image_produces_text_json_frame(self, dial_handler):
         result = dial_handler.handle("STATE", make_header_t())
-        assert isinstance(result, str)
+        assert isinstance(result, TextPayload)
         parsed = json.loads(result)
         assert parsed["channel"] == "STATE"
 

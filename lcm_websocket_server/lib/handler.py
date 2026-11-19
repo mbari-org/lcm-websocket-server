@@ -4,6 +4,18 @@ from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+
+class TextPayload(bytes):
+    """
+    UTF-8 encoded payload sent as a WebSocket text frame.
+
+    Lets handlers encode text once and have the server send it to every
+    client without re-encoding a str per connection.
+    """
+
+    __slots__ = ()
+
+
 Payload = str | bytes | bytearray | memoryview
 
 DEFAULT_CACHE_DEPTH = 4
@@ -76,6 +88,7 @@ class LCMWebSocketHandler(ABC):
 
         Returns:
             Response to be sent to the WebSocket client, or None to not send a response.
+            str and TextPayload are sent as text frames, other bytes-like as binary frames.
         """
         raise NotImplementedError
 

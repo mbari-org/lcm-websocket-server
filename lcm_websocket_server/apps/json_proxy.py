@@ -8,11 +8,11 @@ from typing import List, Optional
 from lcmutils import LCMType, LCMTypeRegistry
 
 from lcm_websocket_server.lib.server import LCMWebSocketServer
-from lcm_websocket_server.lib.handler import LCMWebSocketHandler
+from lcm_websocket_server.lib.handler import LCMWebSocketHandler, TextPayload
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher, OBSERVER_QUEUE_MAXSIZE
 from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
-from lcm_websocket_server.lib.lcm_utils.types import encode_event_json
+from lcm_websocket_server.lib.lcm_utils.types import encode_event_json_bytes
 from lcm_websocket_server.lib.log import LogMixin, get_logger, set_stream_handler_verbosity
 
 
@@ -52,7 +52,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
             self.logger.debug(f"Failed to decode LCM data: {e}")
             return None
 
-    def handle(self, channel: str, data: bytes) -> Optional[str]:
+    def handle(self, channel: str, data: bytes) -> Optional[TextPayload]:
         # Decode the LCM message
         event = self._decode(data)
         if event is None:
@@ -62,7 +62,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
         fingerprint_hex = data[:8].hex()
 
         # Encode the event as JSON
-        return encode_event_json(channel, fingerprint_hex, event)
+        return TextPayload(encode_event_json_bytes(channel, fingerprint_hex, event))
 
 
 async def run(
