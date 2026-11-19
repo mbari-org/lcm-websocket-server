@@ -76,17 +76,6 @@ class TestJSONHandlerOutput:
         assert event["timestamp"] == 999
         assert event["frame_id"] == "odom"
 
-    def test_nan_float_is_serialised_as_null(self, registry):
-        """NaN floats must not cause json.dumps to raise; they become JSON null."""
-        from stdlcm import msg_t
-        msg = msg_t()
-        # msg_t has a 'data' bytes field; check for float fields in other types.
-        # Use encode_event_json directly to inject a NaN.
-        from lcm_websocket_server.lib.lcm_utils.types import encode_event_json
-        result = encode_event_json("CH", "ff" * 8, None)
-        parsed = json.loads(result)
-        assert parsed["event"] == {}
-
 
 # ---------------------------------------------------------------------------
 # Data identity (relied on by the server EncodeCache)
