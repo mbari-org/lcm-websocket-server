@@ -11,15 +11,13 @@ import pytest
 from stdlcm import header_t
 
 from lcm_websocket_server.lib.lcm_utils.pubsub import (
+    MAX_CHANNEL_REGEX_LENGTH,
     OBSERVER_QUEUE_MAXSIZE,
+    InvalidChannelRegex,
     LCMObserver,
     LCMRepublisher,
-    InvalidChannelRegex,
-    MAX_CHANNEL_REGEX_LENGTH,
 )
-
 from tests.conftest import make_header_t
-
 
 # ---------------------------------------------------------------------------
 # LCMObserver: queue bounds and drop-oldest
@@ -240,7 +238,7 @@ class TestRepublisherThreadSafety:
             for _ in range(2000):
                 try:
                     r.inject("CH", data)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - collected and asserted below
                     errors.append(exc)
 
         injector = threading.Thread(target=inject_loop, daemon=True)
@@ -269,7 +267,7 @@ class TestRepublisherThreadSafety:
         r.subscribe(obs)
         r.inject("CH", make_header_t(sequence=42))
 
-        ch, data = obs.get_nowait()
+        _ch, data = obs.get_nowait()
         assert header_t.decode(data).sequence == 42
 
 

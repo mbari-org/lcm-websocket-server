@@ -7,12 +7,9 @@ import json
 
 from stdlcm import header_t
 
-
 from lcm_websocket_server.lib.handler import TextPayload
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMObserver, LCMRepublisher
-
 from tests.conftest import make_header_t
-
 
 # ---------------------------------------------------------------------------
 # Synchronous interface (Fix 2)

@@ -7,16 +7,15 @@ multicast network entirely, so no LCM daemon or network is required.
 
 import asyncio
 import socket
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import cv2
 import numpy as np
 import pytest
 import pytest_asyncio
+from lcmutils import LCMTypeRegistry
 from senlcm import image_t
 from stdlcm import header_t
-
-from lcmutils import LCMTypeRegistry
 
 from lcm_websocket_server.apps.dial_proxy import (
     DialHandler,
@@ -29,7 +28,6 @@ from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
 from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
 from lcm_websocket_server.lib.server import LCMWebSocketServer
-
 
 # ---------------------------------------------------------------------------
 # Port helpers
@@ -164,6 +162,6 @@ async def running_server(
     server.close()
     try:
         await asyncio.wait_for(serve_task, timeout=2.0)
-    except (asyncio.TimeoutError, asyncio.CancelledError):
+    except (TimeoutError, asyncio.CancelledError):
         serve_task.cancel()
         await asyncio.gather(serve_task, return_exceptions=True)

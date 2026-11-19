@@ -18,7 +18,6 @@ import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-
 HTML_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -599,7 +598,7 @@ class ViewerHandler(BaseHTTPRequestHandler):
 
     ws_url = ""
 
-    def do_GET(self):  # noqa: N802 (http.server naming convention)
+    def do_GET(self):
         parsed = urlsplit(self.path)
         if parsed.path != "/":
             self.send_response(404)

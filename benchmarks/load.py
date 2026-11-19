@@ -93,10 +93,14 @@ def run_server(port, mode, server_kwargs, streams, ready, go, window_end, stop, 
 
     import cv2
 
-    import lcm_websocket_server.lib.lcm_utils.pubsub as pubsub
-    from lcm_websocket_server.apps.dial_proxy import DialHandler, DownsamplingMJPEGEncoder, ImageMessageToJPEGHandler
+    from lcm_websocket_server.apps.dial_proxy import (
+        DialHandler,
+        DownsamplingMJPEGEncoder,
+        ImageMessageToJPEGHandler,
+    )
     from lcm_websocket_server.apps.json_proxy import JSONHandler
     from lcm_websocket_server.lib.cli import build_registry
+    from lcm_websocket_server.lib.lcm_utils import pubsub
     from lcm_websocket_server.lib.log import set_stream_handler_verbosity
     from lcm_websocket_server.lib.server import LCMWebSocketServer
 
@@ -190,6 +194,7 @@ def run_server(port, mode, server_kwargs, streams, ready, go, window_end, stop, 
             await asyncio.sleep(0.05)
         server.close()
         probe.cancel()
+        serve_task.cancel()
         os._exit(0)  # skip interpreter teardown of daemon threads
 
     asyncio.run(main())
@@ -211,7 +216,7 @@ def run_clients(port, n, path, duration, out_q, barrier, stall_first, compressio
             while (remaining := end - time.perf_counter()) > 0:
                 try:
                     m = await asyncio.wait_for(ws.recv(), remaining)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
                 now = time.time_ns() // 1000
                 if stall:

@@ -6,11 +6,13 @@ Usage (requires stdlcm/senlcm/navlcm/geolcm on PYTHONPATH):
     uv run python benchmarks/encode.py
 """
 import time
+
+from geolcm import point_t
 from lcmutils import LCMTypeRegistry
 from navlcm import odometry_t
 from senlcm import multibeam_euclidean_t
-from geolcm import point_t
 from stdlcm import header_t
+
 from lcm_websocket_server.apps.json_proxy import JSONHandler
 from lcm_websocket_server.lib.lcm_utils import types as T
 
@@ -29,6 +31,8 @@ orj = T.orjson
 if orj is None:
     print("orjson not installed; orjson column repeats stdlib")
 for name, data, n in (("odometry_t", odo.encode(), 20000), ("multibeam n=512", mb.encode(), 1000)):
-    T.orjson = None; a = bench(lambda: h.handle("C", data), n)
-    T.orjson = orj; b = bench(lambda: h.handle("C", data), n)
+    T.orjson = None
+    a = bench(lambda data=data: h.handle("C", data), n)
+    T.orjson = orj
+    b = bench(lambda data=data: h.handle("C", data), n)
     print(f"{name:<18} stdlib {a:8.1f} us   orjson {b:8.1f} us")

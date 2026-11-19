@@ -4,8 +4,9 @@ Image encoding and decoding utilities.
 
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from enum import Enum
-from typing import Optional, Sequence, Type, TypeVar
+from typing import TypeVar
 
 import cv2
 import numpy as np
@@ -106,10 +107,9 @@ _DECODER_MAP = {}
 def _register(
     format: PixelFormat,
     *,
-    decoder: Type[ImageDecoderClass],
-    encoder: Optional[Type[ImageEncoderClass]] = None,
+    decoder: type[ImageDecoderClass],
+    encoder: type[ImageEncoderClass] | None = None,
 ):
-    global _ENCODER_MAP, _DECODER_MAP
     _ENCODER_MAP[format] = encoder
     _DECODER_MAP[format] = decoder
 
@@ -123,7 +123,7 @@ class UnsupportedPixelFormatError(Exception):
         super().__init__(f"Unsupported pixel format: {format} ({format.name})")
 
 
-def get_encoder(format: PixelFormat) -> Type[ImageEncoderClass]:
+def get_encoder(format: PixelFormat) -> type[ImageEncoderClass]:
     """
     Get the image encoder class for the given pixel format.
 
@@ -139,7 +139,7 @@ def get_encoder(format: PixelFormat) -> Type[ImageEncoderClass]:
         raise UnsupportedPixelFormatError(format)
 
 
-def get_decoder(format: PixelFormat) -> Type[ImageDecoderClass]:
+def get_decoder(format: PixelFormat) -> type[ImageDecoderClass]:
     """
     Get the image decoder class for the given pixel format.
 
@@ -226,7 +226,7 @@ class BayerRGGBDecoder(ImageDecoder):
 
 
 class MJPEGEncoder(ImageEncoder):
-    def __init__(self, params: Optional[Sequence[int]] = None):
+    def __init__(self, params: Sequence[int] | None = None):
         super().__init__()
         self.params = params or [cv2.IMWRITE_JPEG_QUALITY, 90]
 

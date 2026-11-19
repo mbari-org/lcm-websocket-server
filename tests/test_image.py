@@ -6,6 +6,9 @@ import cv2
 import numpy as np
 import pytest
 
+from lcm_websocket_server.apps.dial_proxy import (
+    DownsamplingMJPEGEncoder,
+)
 from lcm_websocket_server.lib.image import (
     BGRDecoder,
     GrayDecoder,
@@ -15,9 +18,6 @@ from lcm_websocket_server.lib.image import (
     RGBDecoder,
     UnsupportedPixelFormatError,
     get_decoder,
-)
-from lcm_websocket_server.apps.dial_proxy import (
-    DownsamplingMJPEGEncoder,
 )
 
 W, H = 16, 12  # small enough to be fast; large enough to be non-trivial

@@ -69,7 +69,7 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
         else:
             try:
                 image_event = image_t.decode(data)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - malformed input must not propagate
                 self.logger.warning(f"Failed to decode image_t event from channel {channel}: {e}")
                 return None
 
@@ -83,14 +83,14 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
         # Decode the contained image.
         try:
             image = decoder.decode(image_event.data)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - malformed input must not propagate
             self.logger.warning(f"Failed to decode image from channel {channel}: {e}")
             return None
 
         # Convert the image to JPEG.
         try:
             jpeg = self._encoder.encode(image)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - malformed input must not propagate
             self.logger.warning(f"Failed to encode image as JPEG: {e}")
             return None
 

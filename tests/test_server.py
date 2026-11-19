@@ -21,9 +21,7 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
     LCMRepublisher,
 )
 from lcm_websocket_server.lib.server import ClientRequest, LCMWebSocketServer
-
 from tests.conftest import free_port, make_header_t
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,7 +61,7 @@ async def server_factory(republisher: LCMRepublisher):
         server.close()
         try:
             await asyncio.wait_for(task, timeout=2.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
@@ -76,7 +74,7 @@ class TestMessageDelivery:
     async def test_client_receives_injected_message(
         self, running_server, republisher: LCMRepublisher
     ):
-        server, port = running_server
+        _server, port = running_server
         async with websockets.connect(f"ws://localhost:{port}/") as ws:
             republisher.inject("SENSOR", make_header_t(sequence=7))
             msg = json.loads(await recv(ws))
@@ -86,7 +84,7 @@ class TestMessageDelivery:
     async def test_client_receives_multiple_messages_in_order(
         self, running_server, republisher: LCMRepublisher
     ):
-        server, port = running_server
+        _server, port = running_server
         async with websockets.connect(f"ws://localhost:{port}/") as ws:
             for i in range(5):
                 republisher.inject("CH", make_header_t(sequence=i))
@@ -102,7 +100,7 @@ class TestMessageDelivery:
         self, running_server, republisher: LCMRepublisher
     ):
         """handle() returns None for unknown types; no WebSocket frame is sent."""
-        server, port = running_server
+        _server, port = running_server
         async with websockets.connect(f"ws://localhost:{port}/") as ws:
             republisher.inject("CH", b"\x00" * 16)  # unknown fingerprint
             republisher.inject("CH", make_header_t(sequence=42))  # known → delivered
@@ -119,7 +117,7 @@ class TestChannelFiltering:
     async def test_client_only_receives_matching_channel(
         self, running_server, republisher: LCMRepublisher
     ):
-        server, port = running_server
+        _server, port = running_server
         # Subscribe only to IMU
         async with websockets.connect(f"ws://localhost:{port}/IMU") as ws:
             republisher.inject("GPS", make_header_t(sequence=1))
@@ -132,7 +130,7 @@ class TestChannelFiltering:
     async def test_regex_channel_filter(
         self, running_server, republisher: LCMRepublisher
     ):
-        server, port = running_server
+        _server, port = running_server
         async with websockets.connect(f"ws://localhost:{port}/CAM_.*") as ws:
             republisher.inject("IMU", make_header_t(sequence=0))
             republisher.inject("CAM_FRONT", make_header_t(sequence=1))
@@ -159,10 +157,10 @@ class TestHandleRunsInThread:
         class ThreadCapturingHandler(LCMWebSocketHandler):
             def handle(self, channel, data):
                 handle_thread_ids.append(threading.get_ident())
-                return None  # don't send anything; we only care about the thread
+                # don't send anything; we only care about the thread
 
         _, port = await server_factory(ThreadCapturingHandler())
-        async with websockets.connect(f"ws://localhost:{port}/") as ws:
+        async with websockets.connect(f"ws://localhost:{port}/"):
             republisher.inject("CH", make_header_t())
             # Give the server time to process the message.
             await asyncio.sleep(0.1)
@@ -186,10 +184,9 @@ class TestHandleRunsInThread:
         class SlowHandler(LCMWebSocketHandler):
             def handle(self, channel, data):
                 time.sleep(SLEEP_S)
-                return None
 
         _, port = await server_factory(SlowHandler())
-        async with websockets.connect(f"ws://localhost:{port}/") as ws:
+        async with websockets.connect(f"ws://localhost:{port}/"):
             republisher.inject("CH", make_header_t())
 
             # While the slow handle() is running in a thread, an asyncio.sleep
@@ -256,7 +253,7 @@ class TestErrorHandlingAndCleanup:
         After a message is delivered and the client disconnects, the server's
         websocket_handler coroutine must finish and call unsubscribe().
         """
-        server, port = running_server
+        _server, port = running_server
         async with websockets.connect(f"ws://localhost:{port}/") as ws:
             republisher.inject("CH", make_header_t())
             await recv(ws)
@@ -299,7 +296,7 @@ class TestConfigurableParameters:
         With ?update_interval_ms=50, messages are batched and only the latest
         per channel is delivered at each tick.
         """
-        server, port = running_server
+        _server, port = running_server
         url = f"ws://localhost:{port}/?update_interval_ms=50"
         async with websockets.connect(url) as ws:
             # Inject three messages quickly; only the last should survive batching.
@@ -342,7 +339,7 @@ class TestConfigurableParameters:
                 try:
                     msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=2.0))
                     received.append(msg["sequence"])
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
 
         # We should have received at most 2 messages (the bounded cap), and
@@ -359,7 +356,7 @@ class TestMultipleClients:
     async def test_all_clients_receive_injected_message(
         self, running_server, republisher: LCMRepublisher
     ):
-        server, port = running_server
+        _server, port = running_server
         url = f"ws://localhost:{port}/"
         async with (
             websockets.connect(url) as ws1,
@@ -383,7 +380,7 @@ class TestMultipleClients:
         _, port = await server_factory(json_handler, observer_queue_maxsize=4)
         url = f"ws://localhost:{port}/"
         async with (
-            websockets.connect(url) as slow_ws,
+            websockets.connect(url),
             websockets.connect(url) as fast_ws,
         ):
             # Flood both queues; the slow client never drains, the fast one will.
@@ -397,7 +394,7 @@ class TestMultipleClients:
                 try:
                     msg = json.loads(await asyncio.wait_for(fast_ws.recv(), timeout=2.0))
                     received.append(msg["event"]["sequence"])
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
             elapsed = time.monotonic() - t0
 
@@ -481,7 +478,7 @@ class TestConflation:
             while True:
                 try:
                     msg = json.loads(await asyncio.wait_for(ws.recv(), 0.3))
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     return received
                 received.setdefault(msg["channel"], []).append(msg["event"]["sequence"])
 

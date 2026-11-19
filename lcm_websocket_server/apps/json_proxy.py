@@ -52,7 +52,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
                     if nested_message is not None:
                         setattr(message, slot, nested_message)
             return message
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - malformed input must not propagate
             self.logger.debug(f"Failed to decode LCM data: {e}")
             return None
 
