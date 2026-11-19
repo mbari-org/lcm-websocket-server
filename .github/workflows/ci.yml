@@ -57,6 +57,10 @@ jobs:
     concurrency: release
     permissions:
       contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -66,7 +70,90 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Release
-        run: uv run --group release semantic-release version
+      - name: Version, tag and GitHub release
+        id: release
+        run: |
+          BEFORE=$(git tag -l | sort)
+          uv run --group release semantic-release version
+          AFTER=$(git tag -l | sort)
+          NEW_TAG=$(comm -13 <(echo "$BEFORE") <(echo "$AFTER") | head -1)
+          if [ -n "$NEW_TAG" ]; then
+            VERSION=${NEW_TAG#v}
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            if [[ "$VERSION" == *-* ]]; then PRE=true; else PRE=false; fi
+            echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release assets
+        if: steps.release.outputs.released == 'true'
+        run: uv run --group release semantic-release publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Builds and smoke-tests the Docker image. On pull requests the image is
+  # only tested. After a release it is built from the release tag and pushed
+  # to Docker Hub:
+  #   release on main:      X.Y.Z, X.Y, latest
+  #   prerelease on develop: X.Y.Z-rc.N, develop
+  # (Tags pushed by GITHUB_TOKEN do not trigger workflows, so this runs here
+  # rather than in a separate on-tag workflow.)
+  docker:
+    needs: [build, release]
+    if: >-
+      !cancelled() && needs.build.result == 'success' &&
+      (github.event_name == 'pull_request' || needs.release.outputs.released == 'true')
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ needs.release.outputs.released == 'true' }}
+      VERSION: ${{ needs.release.outputs.version }}
+      PRERELEASE: ${{ needs.release.outputs.prerelease == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.PUBLISH == 'true' && format('v{0}', env.VERSION) || '' }}
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: mbari/lcm-websocket-server
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.VERSION }},enable=${{ env.PUBLISH }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }},enable=${{ env.PUBLISH == 'true' && env.PRERELEASE == 'false' }}
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' && env.PRERELEASE == 'false' }}
+            type=raw,value=develop,enable=${{ env.PUBLISH == 'true' && env.PRERELEASE == 'true' }}
+            type=raw,value=ci,enable=${{ env.PUBLISH != 'true' }}
+
+      - name: Build
+        uses: docker/bake-action@v6
+        with:
+          source: .
+          files: |
+            ./docker-bake.hcl
+            cwd://${{ steps.meta.outputs.bake-file }}
+          targets: image
+          load: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+
+      - name: Smoke test
+        run: docker/smoke_test.sh "mbari/lcm-websocket-server:${{ env.PUBLISH == 'true' && env.VERSION || 'ci' }}"
+
+      - name: Log in to Docker Hub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push
+        if: env.PUBLISH == 'true'
+        run: echo "${{ steps.meta.outputs.tags }}" | xargs -n1 docker push
