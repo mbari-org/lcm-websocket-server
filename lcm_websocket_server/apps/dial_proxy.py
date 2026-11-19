@@ -3,27 +3,34 @@ LCM WebSocket Proxy Server for the Dial visualization webapp.
 """
 
 import argparse
-import asyncio
 from io import BytesIO
-from typing import Optional, Union
 
 import cv2
-from numpy import ndarray
 from lcmlog.event import Header
-from lcmutils import LCMTypeRegistry
+from numpy import ndarray
 from senlcm import image_t
 from stdlcm import header_t
 
-from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher, OBSERVER_QUEUE_MAXSIZE
-from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
-from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
-from lcm_websocket_server.lib.handler import LCMWebSocketHandler
-from lcm_websocket_server.lib.image import MJPEGEncoder, PixelFormat, UnsupportedPixelFormatError, get_decoder
-from lcm_websocket_server.lib.log import LogMixin
-from lcm_websocket_server.lib.server import LCMWebSocketServer
 from lcm_websocket_server.apps.json_proxy import JSONHandler
-from lcm_websocket_server.lib.log import get_logger, set_stream_handler_verbosity
-
+from lcm_websocket_server.lib.cli import (
+    ServerOptions,
+    add_server_args,
+    app_factory,
+    build_registry,
+    parse_server_options,
+    run_app,
+    serve_until_stopped,
+)
+from lcm_websocket_server.lib.handler import LCMWebSocketHandler
+from lcm_websocket_server.lib.image import (
+    MJPEGEncoder,
+    PixelFormat,
+    UnsupportedPixelFormatError,
+    get_decoder,
+)
+from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
+from lcm_websocket_server.lib.log import LogMixin, get_logger
+from lcm_websocket_server.lib.server import DEFAULT_HEAVY_WORKERS, LCMWebSocketServer
 
 logger = get_logger("lcm-websocket-dial-proxy")
 
@@ -53,7 +60,7 @@ class ImageMessageToJPEGHandler(LCMWebSocketHandler, LogMixin):
     def is_heavy(self, channel: str, data: bytes) -> bool:
         return True
 
-    def handle(self, channel: str, data: Union[bytes, image_t]) -> Optional[bytes]:
+    def handle(self, channel: str, data: bytes | image_t) -> bytes | None:
         # Accept either raw bytes or a pre-decoded image_t object.
         if isinstance(data, image_t):
             image_event = data
@@ -92,7 +99,7 @@ class DownsamplingMJPEGEncoder(MJPEGEncoder):
     """
     MJPEG encoder that downsamples the image before encoding it.
     """
-    def __init__(self, scale: float, params: Optional[list] = None):
+    def __init__(self, scale: float, params: list | None = None):
         super().__init__(params)
         self._scale = scale
 
@@ -121,7 +128,7 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
         self._image_handler = image_handler
         self._json_handler = json_handler
 
-    def _encode_image_t(self, channel: str, data: bytes) -> Optional[bytes]:
+    def _encode_image_t(self, channel: str, data: bytes) -> bytes | None:
         """
         Encode an image_t message as a binary frame.
 
@@ -159,93 +166,59 @@ class DialHandler(LCMWebSocketHandler, LogMixin):
     def is_heavy(self, channel: str, data: bytes) -> bool:
         return data[:8] == DialHandler.IMAGE_T_FINGERPRINT
 
-    def handle(self, channel: str, data: bytes) -> Optional[Union[bytes, str]]:
+    def handle(self, channel: str, data: bytes) -> bytes | str | None:
         if data[:8] == DialHandler.IMAGE_T_FINGERPRINT:
             return self._encode_image_t(channel, data)
         return self._json_handler.handle(channel, data)
 
 
+DIAL_LCM_PACKAGES = (
+    "stdlcm",
+    "senlcm",
+    "navlcm",
+    "geolcm",
+    "lcm_action_server",
+    "mission_server",
+    "nav_server",
+    "control_server",
+)
+
+
 async def run(
-    host: str,
-    port: int,
-    channel: str,
+    options: ServerOptions,
     scale: float = 1.0,
     quality: int = 75,
-    observer_queue_maxsize: int = OBSERVER_QUEUE_MAXSIZE,
-    spy_emit_interval_ns: int = 1_000_000_000,
-):
+    image_workers: int = DEFAULT_HEAVY_WORKERS,
+) -> None:
     """
     Run the LCM WebSocket Dial proxy server.
 
     Args:
-        host: Host to bind to
-        port: Port to bind to
-        channel: LCM channel to subscribe to
+        options: Common server options
         scale: The scale factor to resize the image by.
         quality: The JPEG quality level. Clamped to the range [0, 100].
-        observer_queue_maxsize: Max messages buffered per connection
-        spy_emit_interval_ns: LCM spy stats emission interval (nanoseconds)
+        image_workers: Threads for image transcoding.
     """
-    # Create an LCM republisher
-    logger.debug(f"Creating LCM republisher for channel '{channel}'")
-    lcm_republisher = LCMRepublisher(channel)
-    lcm_republisher.start()
-
-    # Initialize the LCM type registry
-    registry = LCMTypeRegistry()
-    package_names = [
-        "stdlcm",
-        "senlcm",
-        "navlcm",
-        "geolcm",
-        "lcm_action_server",
-        "mission_server",
-        "nav_server",
-        "control_server",
-    ]
-    logger.info(f"Discovering LCM types in packages: {', '.join(package_names)}")
-    for package_name in package_names:
-        try:
-            registry.discover(package_name)
-        except ModuleNotFoundError:
-            logger.error(f"Could not discover types in MolaRS package '{package_name}'")
-
-    # Register the channel_stats LCM types for the virtual spy channel
-    registry.register(channel_stats)
-    registry.register(channel_stats_list)
-    logger.info(f"Registered virtual channel stats types: {channel_stats.__name__}, {channel_stats_list.__name__}")
-
-    if not registry.types:
-        logger.critical("No LCM types discovered, exiting.")
+    registry = build_registry(DIAL_LCM_PACKAGES, logger)
+    if registry is None:
         return
-    logger.info(f"Discovered LCM types: {', '.join([t.__name__ for t in registry.types])}")
 
-    # Create an image encoder
     quality = round(max(0, min(quality, 100)))
     jpeg_encoder = DownsamplingMJPEGEncoder(scale=scale, params=[cv2.IMWRITE_JPEG_QUALITY, quality])
+    handler = DialHandler(ImageMessageToJPEGHandler(jpeg_encoder), JSONHandler(registry))
 
-    # Create the sub-handlers
-    image_handler = ImageMessageToJPEGHandler(jpeg_encoder)
-    json_handler = JSONHandler(registry)
-
-    # Create an LCM WebSocket server
-    handler = DialHandler(image_handler, json_handler)
+    logger.debug(f"Creating LCM republisher for channel '{options.channel}'")
+    republisher = LCMRepublisher(options.channel)
     server = LCMWebSocketServer(
-        host,
-        port,
+        options.host,
+        options.port,
         handler,
-        lcm_republisher,
+        republisher,
         spy_registry=registry,
-        observer_queue_maxsize=observer_queue_maxsize,
-        spy_emit_interval_ns=spy_emit_interval_ns,
+        heavy_workers=image_workers,
+        **options.server_kwargs(),
     )
-
-    # Start the server; always stop the LCM republisher on exit
-    logger.debug("Starting LCM WebSocket server")
-    try:
-        await server.serve()
-    finally:
-        lcm_republisher.stop()
+    await serve_until_stopped(server, republisher)
 
 
 def main():
@@ -253,46 +226,19 @@ def main():
     Entry point for the LCM WebSocket Dial proxy server.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
-    parser.add_argument("--port", type=int, default=8765, help="The port to listen on. Default: %(default)s")
-    parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
+    add_server_args(parser, compression_default="none")
     parser.add_argument("--scale", type=float, default=1.0, help="The scale factor to resize the image by. Default: %(default)s")
     parser.add_argument("--quality", type=int, default=75, help="The JPEG quality level, 0-100. Default: %(default)s")
-    parser.add_argument("--queue-size", type=int, default=OBSERVER_QUEUE_MAXSIZE, help="Max messages buffered per connection before oldest are dropped. Default: %(default)s")
-    parser.add_argument("--poll-interval", type=float, default=None, help=argparse.SUPPRESS)  # deprecated no-op
-    parser.add_argument("--spy-interval", type=float, default=1.0, help="LCM spy stats emission interval (seconds). Default: %(default)s")
-    parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
+    parser.add_argument("--image-workers", type=int, default=DEFAULT_HEAVY_WORKERS, help="Threads for image transcoding. Default: %(default)s")
     args = parser.parse_args()
 
-    host = args.host
-    port = args.port
-    channel = args.channel
-    scale = args.scale
-    quality = args.quality
-    verbosity = args.verbose
-    observer_queue_maxsize = args.queue_size
-    spy_emit_interval_ns = int(args.spy_interval * 1_000_000_000)
-
-    # Set the verbosity level
-    set_stream_handler_verbosity(verbosity)
-    if args.poll_interval is not None:
-        logger.warning("--poll-interval is deprecated and ignored; delivery is now event-driven")
-
-    # Run the server coroutine
-    logger.info(f"Starting LCM WebSocket Dial proxy at ws://{host}:{port}")
-    try:
-        asyncio.run(run(
-            host,
-            port,
-            channel,
-            scale=scale,
-            quality=quality,
-                observer_queue_maxsize=observer_queue_maxsize,
-            spy_emit_interval_ns=spy_emit_interval_ns,
-        ))
-    except KeyboardInterrupt:
-        logger.info("Stopped")
+    options = parse_server_options(args, logger)
+    run_app(
+        app_factory(run, options, scale=args.scale, quality=args.quality, image_workers=args.image_workers),
+        options,
+        logger,
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

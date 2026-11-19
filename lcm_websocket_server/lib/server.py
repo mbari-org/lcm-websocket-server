@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from lcmutils import LCMTypeRegistry
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
+from websockets.extensions.permessage_deflate import ServerPerMessageDeflateFactory
 from websockets.frames import CloseCode
 
 from lcm_websocket_server.lib.handler import (
@@ -81,6 +82,8 @@ class LCMWebSocketServer(LogMixin):
         light_workers: int = DEFAULT_LIGHT_WORKERS,
         heavy_workers: int = DEFAULT_HEAVY_WORKERS,
         encode_cache_depth: int = DEFAULT_CACHE_DEPTH,
+        compression: str | None = "deflate",
+        reuse_port: bool = False,
     ):
         self._host = host
         self._port = port
@@ -93,6 +96,10 @@ class LCMWebSocketServer(LogMixin):
             SpyAccumulator(spy_registry, window_ns=spy_emit_interval_ns) if spy_registry is not None else None
         )
 
+        if compression not in ("deflate", None):
+            raise ValueError(f"Unsupported compression: {compression!r}")
+        self._compression = compression
+        self._reuse_port = reuse_port
         self._cache = EncodeCache(encode_cache_depth)
         self._light_executor = ThreadPoolExecutor(light_workers, thread_name_prefix="lws-light")
         self._heavy_executor = ThreadPoolExecutor(heavy_workers, thread_name_prefix="lws-heavy")
@@ -232,13 +239,31 @@ class LCMWebSocketServer(LogMixin):
         if self._spy_accumulator is not None:
             self._lcm_republisher.add_tap(self._spy_accumulator.record)
         try:
-            async with serve(self.websocket_handler, self._host, self._port) as self._server:
+            async with serve(
+                self.websocket_handler, self._host, self._port, **self._serve_kwargs()
+            ) as self._server:
                 await self._server.wait_closed()
         finally:
             if self._spy_accumulator is not None:
                 self._lcm_republisher.remove_tap(self._spy_accumulator.record)
             self._light_executor.shutdown(wait=False, cancel_futures=True)
             self._heavy_executor.shutdown(wait=False, cancel_futures=True)
+
+    def _serve_kwargs(self) -> dict:
+        kwargs = {"compression": None}
+        if self._compression == "deflate":
+            # websockets' default deflate settings with compression level 1:
+            # roughly half the CPU of the default level 6 for a similar ratio on JSON.
+            kwargs["extensions"] = [
+                ServerPerMessageDeflateFactory(
+                    server_max_window_bits=12,
+                    client_max_window_bits=12,
+                    compress_settings={"memLevel": 5, "level": 1},
+                )
+            ]
+        if self._reuse_port:
+            kwargs["reuse_port"] = True
+        return kwargs
 
     def close(self):
         """

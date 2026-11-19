@@ -2,19 +2,23 @@
 LCM WebSocket JSON proxy server.
 """
 import argparse
-import asyncio
-from typing import List, Optional
 
 from lcmutils import LCMType, LCMTypeRegistry
 
-from lcm_websocket_server.lib.server import LCMWebSocketServer
+from lcm_websocket_server.lib.cli import (
+    ServerOptions,
+    add_server_args,
+    app_factory,
+    build_registry,
+    parse_server_options,
+    run_app,
+    serve_until_stopped,
+)
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler, TextPayload
-from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher, OBSERVER_QUEUE_MAXSIZE
-from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
-from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
+from lcm_websocket_server.lib.lcm_utils.pubsub import LCMRepublisher
 from lcm_websocket_server.lib.lcm_utils.types import encode_event_json_bytes
-from lcm_websocket_server.lib.log import LogMixin, get_logger, set_stream_handler_verbosity
-
+from lcm_websocket_server.lib.log import LogMixin, get_logger
+from lcm_websocket_server.lib.server import LCMWebSocketServer
 
 logger = get_logger("lcm-websocket-json-proxy")
 
@@ -27,7 +31,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
     def __init__(self, lcm_type_registry: LCMTypeRegistry):
         self._lcm_type_registry = lcm_type_registry
 
-    def _decode(self, data: bytes) -> Optional[LCMType]:
+    def _decode(self, data: bytes) -> LCMType | None:
         """
         Decode an LCM message.
 
@@ -52,7 +56,7 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
             self.logger.debug(f"Failed to decode LCM data: {e}")
             return None
 
-    def handle(self, channel: str, data: bytes) -> Optional[TextPayload]:
+    def handle(self, channel: str, data: bytes) -> TextPayload | None:
         # Decode the LCM message
         event = self._decode(data)
         if event is None:
@@ -65,66 +69,29 @@ class JSONHandler(LCMWebSocketHandler, LogMixin):
         return TextPayload(encode_event_json_bytes(channel, fingerprint_hex, event))
 
 
-async def run(
-    host: str,
-    port: int,
-    channel: str,
-    lcm_packages: List[str],
-    observer_queue_maxsize: int = OBSERVER_QUEUE_MAXSIZE,
-    spy_emit_interval_ns: int = 1_000_000_000,
-):
+async def run(options: ServerOptions, lcm_packages: list[str]) -> None:
     """
     Run the LCM WebSocket JSON proxy server.
 
     Args:
-        host: Host to bind to
-        port: Port to bind to
-        channel: LCM channel to subscribe to
+        options: Common server options
         lcm_packages: LCM packages to discover types from
-        observer_queue_maxsize: Max messages buffered per connection
-        spy_emit_interval_ns: LCM spy stats emission interval (nanoseconds)
     """
-    # Create an LCM republisher
-    logger.debug(f"Creating LCM republisher for channel '{channel}'")
-    lcm_republisher = LCMRepublisher(channel)
-    lcm_republisher.start()
-
-    # Initialize the LCM type registry
-    registry = LCMTypeRegistry()
-    for package in lcm_packages:
-        try:
-            registry.discover(package)
-        except ModuleNotFoundError:
-            logger.error(f"Failed to discover LCM types in package '{package}'")
-
-    # Register the channel_stats LCM types for the virtual spy channel
-    registry.register(channel_stats)
-    registry.register(channel_stats_list)
-    logger.info(f"Registered virtual channel stats types: {channel_stats.__name__}, {channel_stats_list.__name__}")
-
-    if not registry.types:
-        logger.critical("No LCM types discovered, exiting.")
+    registry = build_registry(lcm_packages, logger)
+    if registry is None:
         return
-    logger.info(f"Discovered LCM types: {', '.join([t.__name__ for t in registry.types])}")
 
-    # Create an LCM WebSocket server
-    handler = JSONHandler(registry)
+    logger.debug(f"Creating LCM republisher for channel '{options.channel}'")
+    republisher = LCMRepublisher(options.channel)
     server = LCMWebSocketServer(
-        host,
-        port,
-        handler,
-        lcm_republisher,
+        options.host,
+        options.port,
+        JSONHandler(registry),
+        republisher,
         spy_registry=registry,
-        observer_queue_maxsize=observer_queue_maxsize,
-        spy_emit_interval_ns=spy_emit_interval_ns,
+        **options.server_kwargs(),
     )
-
-    # Start the server; always stop the LCM republisher on exit
-    logger.debug("Starting LCM WebSocket server")
-    try:
-        await server.serve()
-    finally:
-        lcm_republisher.stop()
+    await serve_until_stopped(server, republisher)
 
 
 def main():
@@ -132,43 +99,13 @@ def main():
     Entry point for the LCM WebSocket JSON proxy server.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", type=str, default="localhost", help="The host to listen on. Default: %(default)s")
-    parser.add_argument("--port", type=int, default=8765, help="The port to listen on. Default: %(default)s")
-    parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
-    parser.add_argument("--queue-size", type=int, default=OBSERVER_QUEUE_MAXSIZE, help="Max messages buffered per connection before oldest are dropped. Default: %(default)s")
-    parser.add_argument("--poll-interval", type=float, default=None, help=argparse.SUPPRESS)  # deprecated no-op
-    parser.add_argument("--spy-interval", type=float, default=1.0, help="LCM spy stats emission interval (seconds). Default: %(default)s")
-    parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
+    add_server_args(parser, compression_default="deflate")
     parser.add_argument("lcm_packages", type=str, help="The LCM packages to discover LCM types from. Separate multiple packages with a comma.")
     args = parser.parse_args()
 
-    host = args.host
-    port = args.port
-    channel = args.channel
-    verbosity = args.verbose
-    lcm_packages = args.lcm_packages.split(",")
-    observer_queue_maxsize = args.queue_size
-    spy_emit_interval_ns = int(args.spy_interval * 1_000_000_000)
-
-    # Set the verbosity level
-    set_stream_handler_verbosity(verbosity)
-    if args.poll_interval is not None:
-        logger.warning("--poll-interval is deprecated and ignored; delivery is now event-driven")
-
-    # Run the server coroutine
-    logger.info(f"Starting LCM WebSocket JSON proxy at ws://{host}:{port}")
-    try:
-        asyncio.run(run(
-            host,
-            port,
-            channel,
-            lcm_packages,
-                observer_queue_maxsize=observer_queue_maxsize,
-            spy_emit_interval_ns=spy_emit_interval_ns,
-        ))
-    except KeyboardInterrupt:
-        logger.info("Stopped")
+    options = parse_server_options(args, logger)
+    run_app(app_factory(run, options, args.lcm_packages.split(",")), options, logger)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
