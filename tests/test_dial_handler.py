@@ -159,7 +159,7 @@ class TestDialHandlerEncodeCache:
 
         r.inject("CAM", make_bgr_image_t())
 
-        _, data1 = obs1.get(block=False)
-        _, data2 = obs2.get(block=False)
+        _, data1 = obs1.get_nowait()
+        _, data2 = obs2.get_nowait()
 
         assert data1 is data2, "Both queues must hold the same bytes object"

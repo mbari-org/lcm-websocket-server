@@ -80,7 +80,6 @@ async def run(
     port: int,
     channel: str,
     lcm_packages: List[str],
-    empty_wait_seconds: float = 0.1,
     observer_queue_maxsize: int = OBSERVER_QUEUE_MAXSIZE,
     spy_emit_interval_ns: int = 1_000_000_000,
 ):
@@ -92,7 +91,6 @@ async def run(
         port: Port to bind to
         channel: LCM channel to subscribe to
         lcm_packages: LCM packages to discover types from
-        empty_wait_seconds: Poll sleep when the queue is empty (seconds)
         observer_queue_maxsize: Max messages buffered per connection
         spy_emit_interval_ns: LCM spy stats emission interval (nanoseconds)
     """
@@ -126,7 +124,6 @@ async def run(
         port,
         handler,
         lcm_republisher,
-        empty_wait_seconds=empty_wait_seconds,
         spy_registry=registry,
         observer_queue_maxsize=observer_queue_maxsize,
         spy_emit_interval_ns=spy_emit_interval_ns,
@@ -149,7 +146,7 @@ def main():
     parser.add_argument("--port", type=int, default=8765, help="The port to listen on. Default: %(default)s")
     parser.add_argument("--channel", type=str, default=".*", help="The LCM channel to subscribe to. Use '.*' to subscribe to all channels.")
     parser.add_argument("--queue-size", type=int, default=OBSERVER_QUEUE_MAXSIZE, help="Max messages buffered per connection before oldest are dropped. Default: %(default)s")
-    parser.add_argument("--poll-interval", type=float, default=0.1, help="Sleep duration (seconds) when the message queue is empty. Default: %(default)s")
+    parser.add_argument("--poll-interval", type=float, default=None, help=argparse.SUPPRESS)  # deprecated no-op
     parser.add_argument("--spy-interval", type=float, default=1.0, help="LCM spy stats emission interval (seconds). Default: %(default)s")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
     parser.add_argument("lcm_packages", type=str, help="The LCM packages to discover LCM types from. Separate multiple packages with a comma.")
@@ -160,12 +157,13 @@ def main():
     channel = args.channel
     verbosity = args.verbose
     lcm_packages = args.lcm_packages.split(",")
-    empty_wait_seconds = args.poll_interval
     observer_queue_maxsize = args.queue_size
     spy_emit_interval_ns = int(args.spy_interval * 1_000_000_000)
 
     # Set the verbosity level
     set_stream_handler_verbosity(verbosity)
+    if args.poll_interval is not None:
+        logger.warning("--poll-interval is deprecated and ignored; delivery is now event-driven")
 
     # Run the server coroutine
     logger.info(f"Starting LCM WebSocket JSON proxy at ws://{host}:{port}")
@@ -175,8 +173,7 @@ def main():
             port,
             channel,
             lcm_packages,
-            empty_wait_seconds=empty_wait_seconds,
-            observer_queue_maxsize=observer_queue_maxsize,
+                observer_queue_maxsize=observer_queue_maxsize,
             spy_emit_interval_ns=spy_emit_interval_ns,
         ))
     except KeyboardInterrupt:

@@ -180,7 +180,6 @@ async def run(
     channel: str,
     scale: float = 1.0,
     quality: int = 75,
-    empty_wait_seconds: float = 0.1,
     observer_queue_maxsize: int = OBSERVER_QUEUE_MAXSIZE,
     spy_emit_interval_ns: int = 1_000_000_000,
 ):
@@ -193,7 +192,6 @@ async def run(
         channel: LCM channel to subscribe to
         scale: The scale factor to resize the image by.
         quality: The JPEG quality level. Clamped to the range [0, 100].
-        empty_wait_seconds: Poll sleep when the message queue is empty (seconds)
         observer_queue_maxsize: Max messages buffered per connection
         spy_emit_interval_ns: LCM spy stats emission interval (nanoseconds)
     """
@@ -246,7 +244,6 @@ async def run(
         port,
         handler,
         lcm_republisher,
-        empty_wait_seconds=empty_wait_seconds,
         spy_registry=registry,
         observer_queue_maxsize=observer_queue_maxsize,
         spy_emit_interval_ns=spy_emit_interval_ns,
@@ -271,7 +268,7 @@ def main():
     parser.add_argument("--scale", type=float, default=1.0, help="The scale factor to resize the image by. Default: %(default)s")
     parser.add_argument("--quality", type=int, default=75, help="The JPEG quality level, 0-100. Default: %(default)s")
     parser.add_argument("--queue-size", type=int, default=OBSERVER_QUEUE_MAXSIZE, help="Max messages buffered per connection before oldest are dropped. Default: %(default)s")
-    parser.add_argument("--poll-interval", type=float, default=0.1, help="Sleep duration (seconds) when the message queue is empty. Default: %(default)s")
+    parser.add_argument("--poll-interval", type=float, default=None, help=argparse.SUPPRESS)  # deprecated no-op
     parser.add_argument("--spy-interval", type=float, default=1.0, help="LCM spy stats emission interval (seconds). Default: %(default)s")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
     args = parser.parse_args()
@@ -282,12 +279,13 @@ def main():
     scale = args.scale
     quality = args.quality
     verbosity = args.verbose
-    empty_wait_seconds = args.poll_interval
     observer_queue_maxsize = args.queue_size
     spy_emit_interval_ns = int(args.spy_interval * 1_000_000_000)
 
     # Set the verbosity level
     set_stream_handler_verbosity(verbosity)
+    if args.poll_interval is not None:
+        logger.warning("--poll-interval is deprecated and ignored; delivery is now event-driven")
 
     # Run the server coroutine
     logger.info(f"Starting LCM WebSocket Dial proxy at ws://{host}:{port}")
@@ -298,8 +296,7 @@ def main():
             channel,
             scale=scale,
             quality=quality,
-            empty_wait_seconds=empty_wait_seconds,
-            observer_queue_maxsize=observer_queue_maxsize,
+                observer_queue_maxsize=observer_queue_maxsize,
             spy_emit_interval_ns=spy_emit_interval_ns,
         ))
     except KeyboardInterrupt:

@@ -147,9 +147,6 @@ async def running_server(
 ) -> AsyncIterator[tuple[LCMWebSocketServer, int]]:
     """
     Start a real LCMWebSocketServer on a free port and tear it down after each test.
-
-    Uses empty_wait_seconds=0.001 so tests don't spend 100 ms waiting on each
-    empty-queue poll.
     """
     port = free_port()
     server = LCMWebSocketServer(
@@ -157,7 +154,6 @@ async def running_server(
         port,
         json_handler,
         republisher,
-        empty_wait_seconds=0.001,
     )
     serve_task = asyncio.create_task(server.serve())
     # Give the server time to bind and start accepting connections.

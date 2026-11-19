@@ -151,7 +151,7 @@ class TestJSONHandlerEncodeCache:
 
         r.inject("CH", make_header_t())
 
-        items = [obs.get(block=False) for obs in observers]
+        items = [obs.get_nowait() for obs in observers]
         data_objects = [item[1] for item in items]
 
         first = data_objects[0]

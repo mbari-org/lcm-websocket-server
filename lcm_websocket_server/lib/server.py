@@ -1,22 +1,54 @@
 import asyncio
-import queue
-from urllib.parse import unquote, urlparse, parse_qs
-from typing import Optional
+from dataclasses import dataclass
+from urllib.parse import parse_qs, unquote, urlparse
 
 from lcmutils import LCMTypeRegistry
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
-from websockets.protocol import OPEN
+from websockets.frames import CloseCode
 
 from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.lcm_utils.pubsub import (
+    OBSERVER_QUEUE_MAXSIZE,
+    InvalidChannelRegex,
     LCMObserver,
     LCMRepublisher,
     LCMTimedObserver,
-    OBSERVER_QUEUE_MAXSIZE,
 )
 from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy
 from lcm_websocket_server.lib.log import LogMixin
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+# WebSocket close reasons are limited to 123 bytes.
+_MAX_CLOSE_REASON = 120
+
+
+@dataclass(frozen=True)
+class ClientRequest:
+    """Subscription parameters parsed from the WebSocket request path."""
+
+    channel_regex: str
+    update_interval_ms: int | None = None
+    conflate: bool = False
+
+    @classmethod
+    def parse(cls, path: str) -> "ClientRequest":
+        parsed = urlparse(path)
+        query = parse_qs(parsed.query)
+
+        channel_regex = unquote(parsed.path.lstrip("/")) or ".*"
+
+        update_interval_ms = None
+        if "update_interval_ms" in query:
+            try:
+                update_interval_ms = int(query["update_interval_ms"][0])
+            except ValueError:
+                raise ValueError(f"Invalid update_interval_ms value: {query['update_interval_ms'][0]!r}")
+            if update_interval_ms <= 0:
+                raise ValueError("update_interval_ms must be positive")
+
+        conflate = query.get("conflate", ["0"])[0].lower() in _TRUE_VALUES
+        return cls(channel_regex, update_interval_ms, conflate)
 
 
 class LCMWebSocketServer(LogMixin):
@@ -32,8 +64,7 @@ class LCMWebSocketServer(LogMixin):
         port: int,
         handler: LCMWebSocketHandler,
         lcm_republisher: LCMRepublisher,
-        empty_wait_seconds: float = 0.1,
-        spy_registry: Optional[LCMTypeRegistry] = None,
+        spy_registry: LCMTypeRegistry | None = None,
         observer_queue_maxsize: int = OBSERVER_QUEUE_MAXSIZE,
         spy_emit_interval_ns: int = 1_000_000_000,
     ):
@@ -41,7 +72,6 @@ class LCMWebSocketServer(LogMixin):
         self._port = port
         self._handler = handler
         self._lcm_republisher = lcm_republisher
-        self._empty_wait_seconds = empty_wait_seconds
         self._spy_registry = spy_registry
         self._observer_queue_maxsize = observer_queue_maxsize
         self._spy_emit_interval_ns = spy_emit_interval_ns
@@ -55,49 +85,52 @@ class LCMWebSocketServer(LogMixin):
         Args:
             websocket: The WebSocket connection
         """
-        # Parse the path and query
-        parsed_url = urlparse(websocket.request.path)
-        query_params = parse_qs(parsed_url.query)
-
-        # Parse the update interval in ms, if present in query params
-        update_interval_ms = None
-        if 'update_interval_ms' in query_params:
-            try:
-                update_interval_ms = int(query_params['update_interval_ms'][0])
-                self.logger.info(f"Using update interval of {update_interval_ms} ms")
-            except ValueError:
-                self.logger.warning(f"Invalid update_interval_ms value: {query_params['update_interval_ms'][0]}")
-
         client_host, client_port = websocket.remote_address[:2]
-        self.logger.info(f"Client {websocket.id} connected from {client_host}:{client_port} at {parsed_url.path}")
+        try:
+            request = ClientRequest.parse(websocket.request.path)
+            # Periodic mode only ever sends the latest message per channel, so it always conflates.
+            observer = LCMObserver(
+                channel_regex=request.channel_regex,
+                queue_maxsize=self._observer_queue_maxsize,
+                conflate=request.conflate or request.update_interval_ms is not None,
+            )
+        except (ValueError, InvalidChannelRegex) as e:
+            self.logger.warning(f"Rejecting client {websocket.id} from {client_host}:{client_port}: {e}")
+            await websocket.close(CloseCode.POLICY_VIOLATION, str(e)[:_MAX_CLOSE_REASON])
+            return
 
-        channel_regex = unquote(parsed_url.path.lstrip('/'))
-        if not channel_regex:  # empty path -> subscribe to all channels
-            channel_regex = '.*'
+        self.logger.info(
+            f"Client {websocket.id} connected from {client_host}:{client_port} at {websocket.request.path}"
+        )
 
-        # Subscribe to the LCM republisher
-        observer = LCMObserver(channel_regex=channel_regex, queue_maxsize=self._observer_queue_maxsize)
         self._lcm_republisher.subscribe(observer)
+        tasks = []
+        if request.update_interval_ms is not None:
+            tasks.append(asyncio.create_task(self._periodic_loop(observer, websocket, request.update_interval_ms)))
+        else:
+            tasks.append(asyncio.create_task(self._stream_loop(observer, websocket)))
 
-        spy = None
         spy_observer = None
         if self._spy_registry is not None and observer.match(LCMSpy.VIRTUAL_CHANNEL):
-            spy = LCMSpy(self._spy_registry)
             spy_observer = LCMTimedObserver(channel_regex=".*", queue_maxsize=self._observer_queue_maxsize)
             self._lcm_republisher.subscribe(spy_observer)
+            tasks.append(asyncio.create_task(self._spy_loop(websocket, LCMSpy(self._spy_registry), spy_observer)))
             self.logger.info(f"Enabled per-connection spy stats for client {websocket.id}")
 
+        closed = asyncio.create_task(websocket.wait_closed())
         self.logger.debug(f"Active subscribers after connect: {self._lcm_republisher.subscriber_count}")
         try:
-            if update_interval_ms is not None:
-                await self._periodic_update_loop(observer, websocket, update_interval_ms, spy, spy_observer)
-            else:
-                await self._update_loop(observer, websocket, spy, spy_observer)
-        except ConnectionClosed:
-            pass
-        except Exception as e:
-            self.logger.error(f"Unexpected error in client {websocket.id}: {e}")
+            done, _ = await asyncio.wait([*tasks, closed], return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task is closed or task.cancelled():
+                    continue
+                exc = task.exception()
+                if exc is not None and not isinstance(exc, ConnectionClosed):
+                    self.logger.error(f"Unexpected error in client {websocket.id}: {exc!r}")
         finally:
+            for task in (*tasks, closed):
+                task.cancel()
+            await asyncio.gather(*tasks, closed, return_exceptions=True)
             self._lcm_republisher.unsubscribe(observer)
             if spy_observer is not None:
                 self._lcm_republisher.unsubscribe(spy_observer)
@@ -106,148 +139,65 @@ class LCMWebSocketServer(LogMixin):
                 f"active subscribers: {self._lcm_republisher.subscriber_count}"
             )
 
-    async def _send_virtual_spy_if_due(self, websocket: ServerConnection, spy: Optional[LCMSpy]) -> None:
-        if spy is None:
-            return
-
-        payload = spy.maybe_get_stats_bytes(self._spy_emit_interval_ns)
-        if payload is None:
-            return
-
-        response = await asyncio.to_thread(self._handler.handle, LCMSpy.VIRTUAL_CHANNEL, payload)
-        if response is None:
-            return
-
-        await websocket.send(response)
-
-    def _drain_spy_observer(self, spy_observer: Optional[LCMTimedObserver], spy: Optional[LCMSpy]) -> None:
-        if spy_observer is None or spy is None:
-            return
-
-        while True:
-            try:
-                channel, data, timestamp_ns = spy_observer.get(block=False)
-            except queue.Empty:
-                break
-
-            spy.handle(channel, data, timestamp_ns=timestamp_ns)
-            spy_observer.task_done()
-
-    async def _update_loop(
-        self,
-        observer: LCMObserver,
-        websocket: ServerConnection,
-        spy: Optional[LCMSpy],
-        spy_observer: Optional[LCMTimedObserver],
-    ):
+    async def _encode(self, channel: str, data: bytes):
         """
-        Update loop: dequeue and forward LCM messages as fast as the client can consume them.
+        Encode a message for sending. handler.handle() runs in a worker thread so
+        CPU-intensive work does not block the event loop. Errors are logged and
+        yield None.
+        """
+        try:
+            return await asyncio.to_thread(self._handler.handle, channel, data)
+        except Exception as e:  # noqa: BLE001 - a bad message must not end the stream
+            self.logger.error(f"Error during message handling on channel {channel!r}: {e!r}")
+            return None
 
-        handler.handle() is offloaded to a thread so CPU-intensive work (image
-        encoding, JSON serialisation) does not block the event loop.
+    async def _send(self, websocket: ServerConnection, payload) -> None:
+        await websocket.send(payload)
 
-        task_done() is guaranteed to be called for every successful get() via a
-        try/finally block, regardless of whether handle() or send() raises.
+    async def _stream_loop(self, observer: LCMObserver, websocket: ServerConnection):
+        """
+        Forward messages as fast as the client can consume them. Waits on the
+        observer (no polling), so delivery latency is bounded by encode + send.
         """
         while True:
-            self._drain_spy_observer(spy_observer, spy)
+            channel, data = await observer.get()
+            payload = await self._encode(channel, data)
+            if payload is not None:
+                await self._send(websocket, payload)
 
-            try:
-                channel, data = observer.get(block=False)
-            except queue.Empty:
-                if websocket.state is not OPEN:
-                    break
-                try:
-                    await self._send_virtual_spy_if_due(websocket, spy)
-                except Exception as e:
-                    self.logger.debug(f"Error while sending spy response to client {websocket.id}: {e}")
-                    if websocket.state is not OPEN:
-                        break
-                await asyncio.sleep(self._empty_wait_seconds)
-                continue
-
-            # task_done() is called in the finally so it is never skipped,
-            # even when handle() raises or send() fails.
-            try:
-                try:
-                    response = await asyncio.to_thread(self._handler.handle, channel, data)
-                except Exception as e:
-                    self.logger.error(f"Error during message handling: {e}")
-                    continue  # finally still runs
-
-                if response is not None:
-                    await websocket.send(response)
-            except ConnectionClosed:
-                break  # finally still runs; stop work for a dead connection
-            finally:
-                observer.task_done()
-
-            try:
-                await self._send_virtual_spy_if_due(websocket, spy)
-            except Exception as e:
-                self.logger.debug(f"Error while sending spy response to client {websocket.id}: {e}")
-                if websocket.state is not OPEN:
-                    break
-
-    async def _periodic_update_loop(
-        self,
-        observer: LCMObserver,
-        websocket: ServerConnection,
-        update_interval_ms: int,
-        spy: Optional[LCMSpy],
-        spy_observer: Optional[LCMTimedObserver],
-    ):
+    async def _periodic_loop(self, observer: LCMObserver, websocket: ServerConnection, update_interval_ms: int):
         """
-        Periodic update loop: emit only the latest message per channel at a fixed interval.
+        Emit only the latest message per channel at a fixed interval.
 
-        handler.handle() is offloaded to a thread (same as _update_loop).
+        Deadlines are absolute so the period does not drift by the processing time.
         """
-        interval_sec = update_interval_ms / 1000.0
-        channel_latest_data: dict[str, bytes | None] = {}
+        loop = asyncio.get_running_loop()
+        interval = update_interval_ms / 1000.0
+        deadline = loop.time()
         while True:
-            if websocket.state is not OPEN:
-                break
+            deadline += interval
+            delay = deadline - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            else:
+                deadline = loop.time()  # fell behind; do not burst to catch up
 
-            await asyncio.sleep(interval_sec)
+            for channel, data in observer.drain():
+                payload = await self._encode(channel, data)
+                if payload is not None:
+                    await self._send(websocket, payload)
 
-            self._drain_spy_observer(spy_observer, spy)
-
-            # Drain the observer queue, keeping only the latest message per channel.
-            while True:
-                try:
-                    channel, data = observer.get(block=False)
-                    channel_latest_data[channel] = data
-                    observer.task_done()
-                except queue.Empty:
-                    break
-
-            self._drain_spy_observer(spy_observer, spy)
-
-            # Handle and send the latest message for each channel.
-            for channel, data in channel_latest_data.items():
-                if data is None:
-                    continue
-
-                try:
-                    response = await asyncio.to_thread(self._handler.handle, channel, data)
-                except Exception as e:
-                    self.logger.error(f"Error during message handling: {e}")
-                    continue
-                finally:
-                    channel_latest_data[channel] = None
-
-                if response is not None:
-                    try:
-                        await websocket.send(response)
-                    except ConnectionClosed:
-                        return
-
-            try:
-                await self._send_virtual_spy_if_due(websocket, spy)
-            except Exception as e:
-                self.logger.debug(f"Error while sending spy response to client {websocket.id}: {e}")
-                if websocket.state is not OPEN:
-                    break
+    async def _spy_loop(self, websocket: ServerConnection, spy: LCMSpy, spy_observer: LCMTimedObserver):
+        """Emit the virtual spy channel at a fixed cadence."""
+        interval = self._spy_emit_interval_ns / 1e9
+        while True:
+            await asyncio.sleep(interval)
+            for channel, data, timestamp_ns in spy_observer.drain():
+                spy.handle(channel, data, timestamp_ns=timestamp_ns)
+            payload = spy.maybe_get_stats_bytes(0)
+            response = await self._encode(LCMSpy.VIRTUAL_CHANNEL, payload)
+            if response is not None:
+                await self._send(websocket, response)
 
     async def serve(self):
         """

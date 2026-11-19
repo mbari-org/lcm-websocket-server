@@ -24,7 +24,7 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
     LCMRepublisher,
     OBSERVER_QUEUE_MAXSIZE,
 )
-from lcm_websocket_server.lib.server import LCMWebSocketServer
+from lcm_websocket_server.lib.server import ClientRequest, LCMWebSocketServer
 
 from tests.conftest import free_port, make_bgr_image_t, make_header_t
 
@@ -54,7 +54,6 @@ async def server_factory(republisher: LCMRepublisher):
     started: list[tuple[LCMWebSocketServer, asyncio.Task]] = []
 
     async def make(handler: LCMWebSocketHandler, **kwargs) -> tuple[LCMWebSocketServer, int]:
-        kwargs.setdefault("empty_wait_seconds", 0.001)
         port = free_port()
         server = LCMWebSocketServer("localhost", port, handler, republisher, **kwargs)
         task = asyncio.create_task(server.serve())
@@ -220,16 +219,16 @@ class TestHandleRunsInThread:
 
 
 # ---------------------------------------------------------------------------
-# Fix 6: task_done() called even on errors
+# Error handling and cleanup
 # ---------------------------------------------------------------------------
 
-class TestTaskDoneInvariant:
+class TestErrorHandlingAndCleanup:
     async def test_server_continues_processing_after_handler_exception(
         self, server_factory, republisher: LCMRepublisher
     ):
         """
-        If handle() raises, task_done() must still be called and the server
-        must continue processing subsequent messages without deadlocking.
+        If handle() raises, the server must log it and continue processing
+        subsequent messages.
         """
         call_count = 0
 
@@ -254,14 +253,12 @@ class TestTaskDoneInvariant:
             msg = json.loads(await recv(ws))
             assert msg["sequence"] == 99
 
-    async def test_queue_unfinished_tasks_is_zero_after_successful_message(
+    async def test_observer_unsubscribed_after_disconnect(
         self, running_server, republisher: LCMRepublisher
     ):
         """
         After a message is delivered and the client disconnects, the server's
-        websocket_handler coroutine must finish and call unsubscribe().  This
-        proves task_done() was called (otherwise the loop would stall before
-        unsubscribing) and that cleanup is correct.
+        websocket_handler coroutine must finish and call unsubscribe().
         """
         server, port = running_server
         async with websockets.connect(f"ws://localhost:{port}/") as ws:
@@ -272,12 +269,7 @@ class TestTaskDoneInvariant:
         # closed connection, exit the update loop, and call unsubscribe().
         await asyncio.sleep(0.2)
 
-        with republisher._subscribers_lock:
-            snapshot = list(republisher._subscribers)
-        assert len(snapshot) == 0, (
-            "Observer was not unsubscribed after disconnect; "
-            "the update loop may have stalled (task_done() not called)"
-        )
+        assert republisher.subscriber_count == 0, "Observer was not unsubscribed after disconnect"
 
 
 # ---------------------------------------------------------------------------
@@ -415,3 +407,101 @@ class TestMultipleClients:
 
             assert len(received) > 0, "Fast client received no messages"
             assert elapsed < 2.0, f"Fast client was blocked for {elapsed:.2f}s"
+
+
+# ---------------------------------------------------------------------------
+# Request parsing and validation
+# ---------------------------------------------------------------------------
+
+class TestClientRequest:
+    def test_defaults(self):
+        req = ClientRequest.parse("/")
+        assert req == ClientRequest(".*", None, False)
+
+    def test_url_decoded_regex_and_params(self):
+        req = ClientRequest.parse("/CAM_%2E%2A?update_interval_ms=250&conflate=true")
+        assert req == ClientRequest("CAM_.*", 250, True)
+
+    @pytest.mark.parametrize("query", ["update_interval_ms=abc", "update_interval_ms=0", "update_interval_ms=-5"])
+    def test_invalid_update_interval_rejected(self, query):
+        with pytest.raises(ValueError):
+            ClientRequest.parse(f"/?{query}")
+
+
+class TestRequestRejection:
+    @pytest.mark.parametrize("path", ["/[invalid", "/?update_interval_ms=abc"])
+    async def test_invalid_request_closed_with_policy_violation(self, running_server, path):
+        _, port = running_server
+        async with websockets.connect(f"ws://localhost:{port}{path}") as ws:
+            with pytest.raises(websockets.ConnectionClosed) as info:
+                await recv(ws)
+        assert info.value.rcvd.code == 1008
+
+
+# ---------------------------------------------------------------------------
+# Event-driven delivery
+# ---------------------------------------------------------------------------
+
+class TestEventDrivenDelivery:
+    async def test_message_after_idle_period_is_delivered_promptly(
+        self, running_server, republisher: LCMRepublisher
+    ):
+        """No polling: a message arriving after an idle period is not delayed by a sleep interval."""
+        _, port = running_server
+        async with websockets.connect(f"ws://localhost:{port}/") as ws:
+            await asyncio.sleep(0.3)
+            t0 = time.monotonic()
+            republisher.inject("CH", make_header_t(sequence=1))
+            await recv(ws)
+            assert time.monotonic() - t0 < 0.05
+
+    async def test_idle_client_disconnect_unsubscribes_promptly(
+        self, running_server, republisher: LCMRepublisher
+    ):
+        _, port = running_server
+        async with websockets.connect(f"ws://localhost:{port}/"):
+            await asyncio.sleep(0.05)
+            assert republisher.subscriber_count == 1
+        for _ in range(50):
+            if republisher.subscriber_count == 0:
+                break
+            await asyncio.sleep(0.01)
+        assert republisher.subscriber_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Conflation
+# ---------------------------------------------------------------------------
+
+class TestConflation:
+    async def _burst_then_collect(self, port, query, republisher):
+        async with websockets.connect(f"ws://localhost:{port}/{query}") as ws:
+            await asyncio.sleep(0.05)
+            # Synchronous burst: the server cannot drain between injections.
+            republisher.inject("QUIET", make_header_t(sequence=1))
+            for i in range(50):
+                republisher.inject("BUSY", make_header_t(sequence=i))
+            received = {}
+            while True:
+                try:
+                    msg = json.loads(await asyncio.wait_for(ws.recv(), 0.3))
+                except asyncio.TimeoutError:
+                    return received
+                received.setdefault(msg["channel"], []).append(msg["event"]["sequence"])
+
+    async def test_fifo_mode_busy_channel_evicts_quiet_channel(self, server_factory, json_handler, republisher):
+        _, port = await server_factory(json_handler, observer_queue_maxsize=4)
+        received = await self._burst_then_collect(port, "", republisher)
+        assert "QUIET" not in received
+
+    async def test_conflate_mode_preserves_quiet_channel_and_latest_busy(
+        self, server_factory, json_handler, republisher
+    ):
+        _, port = await server_factory(json_handler, observer_queue_maxsize=4)
+        received = await self._burst_then_collect(port, "?conflate=1", republisher)
+        assert received == {"QUIET": [1], "BUSY": [49]}
+
+    async def test_periodic_mode_preserves_quiet_channel(self, server_factory, json_handler, republisher):
+        _, port = await server_factory(json_handler, observer_queue_maxsize=4)
+        received = await self._burst_then_collect(port, "?update_interval_ms=50", republisher)
+        assert received == {"QUIET": [1], "BUSY": [49]}

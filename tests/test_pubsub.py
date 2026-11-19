@@ -2,6 +2,7 @@
 Tests for LCMObserver, LCMTimedObserver, and LCMRepublisher.
 """
 
+import asyncio
 import queue
 import threading
 import time
@@ -14,6 +15,8 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
     LCMObserver,
     LCMRepublisher,
     LCMTimedObserver,
+    InvalidChannelRegex,
+    MAX_CHANNEL_REGEX_LENGTH,
 )
 
 from tests.conftest import make_header_t
@@ -26,17 +29,17 @@ from tests.conftest import make_header_t
 class TestLCMObserverBoundedQueue:
     def test_default_maxsize_is_observer_queue_maxsize(self):
         obs = LCMObserver()
-        assert obs._queue.maxsize == OBSERVER_QUEUE_MAXSIZE
+        assert obs._maxsize == OBSERVER_QUEUE_MAXSIZE
 
     def test_custom_maxsize_is_respected(self):
         obs = LCMObserver(queue_maxsize=4)
-        assert obs._queue.maxsize == 4
+        assert obs._maxsize == 4
 
     def test_queue_accepts_messages_up_to_maxsize(self):
         obs = LCMObserver(queue_maxsize=4)
         for i in range(4):
             obs.handle(("CH", make_header_t(sequence=i)))
-        assert obs._queue.qsize() == 4
+        assert len(obs) == 4
 
     def test_drop_oldest_when_full(self):
         """When the queue is full the oldest entry is evicted, not the newest."""
@@ -48,14 +51,13 @@ class TestLCMObserverBoundedQueue:
         # Overflow with a new message: oldest (seq=0) should be dropped.
         obs.handle(("CH", make_header_t(sequence=99)))  # queue: [1, 2, 99]
 
-        assert obs._queue.qsize() == 3
+        assert len(obs) == 3
 
         sequences = []
         while True:
             try:
-                _, data = obs.get(block=False)
+                _, data = obs.get_nowait()
                 sequences.append(header_t.decode(data).sequence)
-                obs.task_done()
             except queue.Empty:
                 break
 
@@ -71,14 +73,13 @@ class TestLCMObserverBoundedQueue:
             obs.handle(("CH", make_header_t(sequence=i)))
 
         # The queue should hold exactly the last `maxsize` messages.
-        assert obs._queue.qsize() == maxsize
+        assert len(obs) == maxsize
 
         sequences = []
         while True:
             try:
-                _, data = obs.get(block=False)
+                _, data = obs.get_nowait()
                 sequences.append(header_t.decode(data).sequence)
-                obs.task_done()
             except queue.Empty:
                 break
 
@@ -111,27 +112,6 @@ class TestLCMObserverBoundedQueue:
         drop_warnings = [r for r in caplog.records if "dropped" in r.message]
         assert len(drop_warnings) == 3
 
-    def test_task_done_count_balanced_after_drop(self):
-        """
-        Each dropped item calls task_done() internally so queue.join() never
-        deadlocks when the caller calls task_done() for the item it consumed.
-        """
-        obs = LCMObserver(queue_maxsize=2)
-        for i in range(4):  # 2 overflow → 2 internal task_done() calls
-            obs.handle(("CH", make_header_t(sequence=i)))
-
-        # Consume both surviving items and call task_done().
-        for _ in range(2):
-            obs.get(block=False)
-            obs.task_done()
-
-        # join() should return immediately (all tasks done).
-        done = threading.Event()
-        t = threading.Thread(target=lambda: (obs._queue.join(), done.set()), daemon=True)
-        t.start()
-        t.join(timeout=1.0)
-        assert done.is_set(), "queue.join() did not return — task_done() accounting is broken"
-
 
 # ---------------------------------------------------------------------------
 # LCMObserver: channel regex matching
@@ -157,9 +137,13 @@ class TestLCMObserverChannelMatching:
         assert obs.match("CAM_REAR") is True
         assert obs.match("IMU") is False
 
-    def test_invalid_regex_returns_false(self):
-        obs = LCMObserver(channel_regex="[invalid")
-        assert obs.match("anything") is False
+    def test_invalid_regex_raises(self):
+        with pytest.raises(InvalidChannelRegex):
+            LCMObserver(channel_regex="[invalid")
+
+    def test_overlong_regex_raises(self):
+        with pytest.raises(InvalidChannelRegex):
+            LCMObserver(channel_regex="A" * (MAX_CHANNEL_REGEX_LENGTH + 1))
 
 
 # ---------------------------------------------------------------------------
@@ -173,8 +157,7 @@ class TestLCMTimedObserver:
         obs.handle(("CH", make_header_t()))
         after = time.monotonic_ns()
 
-        _, _, ts = obs.get(block=False)
-        obs.task_done()
+        _, _, ts = obs.get_nowait()
 
         assert before <= ts <= after
 
@@ -184,13 +167,12 @@ class TestLCMTimedObserver:
             obs.handle(("CH", make_header_t(sequence=i)))
             time.sleep(0.001)  # Ensure distinct timestamps
 
-        assert obs._queue.qsize() == 2
+        assert len(obs) == 2
 
         items = []
         while True:
             try:
-                items.append(obs.get(block=False))
-                obs.task_done()
+                items.append(obs.get_nowait())
             except queue.Empty:
                 break
 
@@ -214,7 +196,7 @@ class TestLCMRepublisher:
 
         r.inject("SENSOR", make_header_t(sequence=7))
 
-        ch, data = obs.get(block=False)
+        ch, data = obs.get_nowait()
         assert ch == "SENSOR"
         assert header_t.decode(data).sequence == 7
 
@@ -226,7 +208,7 @@ class TestLCMRepublisher:
         r.inject("SENSOR", make_header_t())
 
         with pytest.raises(queue.Empty):
-            obs.get(block=False)
+            obs.get_nowait()
 
     def test_dispatches_same_data_object_to_all_matching_observers(self):
         """
@@ -243,9 +225,9 @@ class TestLCMRepublisher:
 
         r.inject("CH", make_header_t())
 
-        _, data1 = obs1.get(block=False)
-        _, data2 = obs2.get(block=False)
-        _, data3 = obs3.get(block=False)
+        _, data1 = obs1.get_nowait()
+        _, data2 = obs2.get_nowait()
+        _, data3 = obs3.get_nowait()
 
         # All three must be the exact same Python object (identity, not equality).
         assert data1 is data2
@@ -260,7 +242,7 @@ class TestLCMRepublisher:
         r.inject("CH", make_header_t())
 
         with pytest.raises(queue.Empty):
-            obs.get(block=False)
+            obs.get_nowait()
 
     def test_multiple_injects_delivered_in_order(self):
         r = LCMRepublisher(".*")
@@ -272,9 +254,8 @@ class TestLCMRepublisher:
 
         sequences = []
         for _ in range(5):
-            _, data = obs.get(block=False)
+            _, data = obs.get_nowait()
             sequences.append(header_t.decode(data).sequence)
-            obs.task_done()
 
         assert sequences == list(range(5))
 
@@ -327,7 +308,7 @@ class TestRepublisherThreadSafety:
         r.subscribe(obs)
         r.inject("CH", make_header_t(sequence=42))
 
-        ch, data = obs.get(block=False)
+        ch, data = obs.get_nowait()
         assert header_t.decode(data).sequence == 42
 
 
@@ -343,3 +324,134 @@ class TestLCMRepublisherLifecycle:
         t0 = time.monotonic()
         rp.stop()
         assert time.monotonic() - t0 < 2.0
+
+
+# ---------------------------------------------------------------------------
+# LCMObserver: conflation (latest per channel)
+# ---------------------------------------------------------------------------
+
+class TestLCMObserverConflate:
+    def test_keeps_only_latest_per_channel(self):
+        obs = LCMObserver(conflate=True)
+        for i in range(10):
+            obs.handle(("A", make_header_t(sequence=i)))
+        obs.handle(("B", make_header_t(sequence=100)))
+        assert len(obs) == 2
+        events = obs.drain()
+        assert [(ch, header_t.decode(d).sequence) for ch, d in events] == [("A", 9), ("B", 100)]
+
+    def test_busy_channel_cannot_evict_quiet_channel(self):
+        obs = LCMObserver(conflate=True, queue_maxsize=2)
+        obs.handle(("QUIET", make_header_t(sequence=1)))
+        for i in range(1000):
+            obs.handle(("BUSY", make_header_t(sequence=i)))
+        channels = [ch for ch, _ in obs.drain()]
+        assert channels == ["QUIET", "BUSY"]
+        assert obs.drop_count == 0
+
+    def test_get_nowait_serves_in_insertion_order(self):
+        obs = LCMObserver(conflate=True)
+        obs.handle(("A", make_header_t(sequence=1)))
+        obs.handle(("B", make_header_t(sequence=2)))
+        obs.handle(("A", make_header_t(sequence=3)))
+        assert obs.get_nowait()[0] == "A"
+        assert obs.get_nowait()[0] == "B"
+        with pytest.raises(queue.Empty):
+            obs.get_nowait()
+
+
+# ---------------------------------------------------------------------------
+# LCMObserver: asyncio consumer
+# ---------------------------------------------------------------------------
+
+class TestLCMObserverAsync:
+    async def test_get_returns_buffered_event_immediately(self):
+        obs = LCMObserver()
+        obs.handle(("CH", b"x"))
+        assert await asyncio.wait_for(obs.get(), 1.0) == ("CH", b"x")
+
+    async def test_get_wakes_on_event_from_other_thread(self):
+        obs = LCMObserver()
+        threading.Timer(0.05, obs.handle, args=(("CH", b"x"),)).start()
+        t0 = time.monotonic()
+        assert await asyncio.wait_for(obs.get(), 1.0) == ("CH", b"x")
+        assert time.monotonic() - t0 < 0.5
+
+    @pytest.mark.parametrize("conflate", [False, True])
+    async def test_no_lost_wakeups_under_concurrent_production(self, conflate):
+        """A producer thread racing the consumer must never leave it waiting with data buffered."""
+        n = 20_000
+        obs = LCMObserver(queue_maxsize=n, conflate=conflate)
+
+        def produce():
+            for i in range(n):
+                obs.handle((f"CH{i % 7}" if conflate else "CH", i.to_bytes(4, "big")))
+                if i % 97 == 0:
+                    time.sleep(0)  # yield to vary interleavings
+
+        threading.Thread(target=produce, daemon=True).start()
+        last = -1
+        while last != n - 1:
+            _, data = await asyncio.wait_for(obs.get(), 2.0)
+            value = int.from_bytes(data, "big")
+            if not conflate:
+                assert value == last + 1  # FIFO, nothing dropped
+            last = max(last, value)
+
+
+# ---------------------------------------------------------------------------
+# LCMRepublisher: routing cache, taps, fault isolation
+# ---------------------------------------------------------------------------
+
+class TestLCMRepublisherRouting:
+    def test_subscriber_added_after_route_cached_receives_messages(self):
+        r = LCMRepublisher(".*")
+        first = LCMObserver(channel_regex="CH")
+        r.subscribe(first)
+        r.inject("CH", b"1")  # populates the route cache
+
+        second = LCMObserver(channel_regex="C.*")
+        r.subscribe(second)
+        r.inject("CH", b"2")
+        assert second.get_nowait() == ("CH", b"2")
+
+    def test_unsubscribe_invalidates_route(self):
+        r = LCMRepublisher(".*")
+        obs = LCMObserver()
+        r.subscribe(obs)
+        r.inject("CH", b"1")
+        r.unsubscribe(obs)
+        r.inject("CH", b"2")
+        assert obs.drain() == [("CH", b"1")]
+
+    def test_regex_evaluated_once_per_channel(self):
+        calls = []
+
+        class CountingObserver(LCMObserver):
+            def match(self, channel):
+                calls.append(channel)
+                return super().match(channel)
+
+        r = LCMRepublisher(".*")
+        r.subscribe(CountingObserver(queue_maxsize=1000))
+        for _ in range(100):
+            r.inject("CH", b"x")
+        assert calls == ["CH"]
+
+    def test_tap_called_with_arrival_timestamp(self):
+        r = LCMRepublisher(".*")
+        seen = []
+        r.add_tap(lambda ch, data, ts: seen.append((ch, data, ts)))
+        before = time.monotonic_ns()
+        r.inject("CH", b"x")
+        assert seen and seen[0][:2] == ("CH", b"x") and seen[0][2] >= before
+
+    def test_exceptions_do_not_escape_handle(self):
+        """An exception on the LCM thread would kill it; _handle must contain it."""
+        r = LCMRepublisher(".*")
+
+        def bad_tap(ch, data, ts):
+            raise RuntimeError("boom")
+
+        r.add_tap(bad_tap)
+        r.inject("CH", b"x")  # must not raise
