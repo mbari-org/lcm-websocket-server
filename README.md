@@ -25,14 +25,7 @@ pip install ".[image]"            # Dial proxy (OpenCV)
 pip install ".[orjson,uvloop]"    # faster JSON encoding and event loop
 ```
 
-For development, use [uv](https://docs.astral.sh/uv/):
-
-```bash
-uv sync --all-extras
-uv run pytest
-```
-
-The tests need the CoMPAS LCM Python types (`stdlcm`, `senlcm`, ...) on `PYTHONPATH`.
+See [Development](#wrench-development) for working on the project itself.
 
 ## :rocket: Usage
 
@@ -66,6 +59,8 @@ Both proxy commands accept these options:
 | `--compression {deflate,none}` | `deflate` (JSON), `none` (Dial) | WebSocket permessage-deflate. Saves bandwidth for JSON on slow links at a CPU cost per client; useless for JPEG |
 | `--uvloop` | off | Use the uvloop event loop (requires the `uvloop` extra) |
 | `--processes N` | 1 | Run N server processes on the same port (`SO_REUSEPORT`) to use more than one core |
+| `--ping-interval S` | 20 | Seconds between WebSocket keepalive pings (0 disables) |
+| `--ping-timeout S` | 20 | Seconds to wait for a pong before closing (0 disables) |
 
 The Dial proxy also accepts:
 
@@ -196,6 +191,41 @@ A Python example client is provided in `examples/spy_client.py`:
 python examples/spy_client.py --host localhost --port 8765
 ```
 
+## :satellite: Deployment
+
+### Monitoring
+
+Plain HTTP requests to the server port answer two endpoints (WebSocket connections on any path are unaffected):
+
+- `GET /healthz` returns `ok`.
+- `GET /metrics` returns Prometheus text: connected clients, LCM messages received, frames and bytes sent, messages dropped from full client queues, encode counts, errors and time, and worst event-loop lag since the last scrape.
+
+A rising `lws_dropped_total` means clients are not keeping up. A sustained `lws_event_loop_lag_max_seconds` above roughly 50 ms means the process is saturated; use `--processes` or reduce load.
+
+### LCM receive buffers
+
+LCM messages dropped by the kernel never reach the server, so they appear in neither the logs, `/metrics`, nor the spy channel. Large or bursty traffic (especially images) needs larger UDP receive buffers than Linux defaults:
+
+```bash
+sudo sysctl -w net.core.rmem_max=16777216 net.core.rmem_default=16777216
+export LCM_DEFAULT_URL="udpm://239.255.76.67:7667?ttl=0&recv_buf_size=16777216"
+```
+
+Persist the `sysctl` settings in `/etc/sysctl.d/`. Check for drops with `netstat -su` (`RcvbufErrors`).
+
+### Matching the link
+
+- **Local network**: compression off for best CPU efficiency.
+- **Constrained links (e.g. ship to shore)**: keep `--compression deflate` for JSON; for Dial use `--scale`, `--quality` and `--max-fps` to cut image bandwidth, and raise `--ping-timeout` if large frames can take longer than 20 s to send. Clients that do not need every message should connect with `?conflate=1` or `?update_interval_ms=`.
+
+### Scaling
+
+One process handles about 100 JSON clients at 1.2 k msg/s (see [benchmarks](benchmarks/README.md)). Beyond that, `--processes N` adds cores. Each process has its own LCM subscription and encode cache, so image transcoding is repeated per process: keep the Dial proxy at one process and run a separate JSON proxy for large numbers of JSON clients.
+
+### Security
+
+The server has no authentication or encryption. When it is reachable beyond a trusted vehicle network, put it behind a reverse proxy that terminates TLS (`wss://`) and enforces access control.
+
 ## :whale: Docker
 
 ### Build
@@ -228,6 +258,25 @@ docker run \
 
 Note that the `HOST`, `PORT`, and `CHANNEL` environment variables specified above are the defaults for the `mbari/lcm-websocket-server` image. These can be omitted if the defaults are acceptable.
 
+Extra command-line flags can be passed with the `ARGS` environment variable, e.g. `-e ARGS="--uvloop --processes 4 -vv"`. The image includes the `orjson` and `uvloop` extras and a `HEALTHCHECK` that polls `/healthz`; if `HOST` is set to an address other than `0.0.0.0` or `127.0.0.1`, the health check cannot reach it.
+
 The `LCM_PACKAGES` environment variable should be set to the name of the package (or comma-separated list of packages) that contains the LCM Python message definitions. The `/app` directory is included in the `PYTHONPATH` so that any packages mounted there (as shown with `-v` above) can be imported.
 
 It's recommended to run with `--network=host` to avoid issues with LCM over UDP. This will allow the container to use the host's network stack.
+
+## :wrench: Development
+
+```bash
+uv sync --all-extras
+uv run pre-commit install   # ruff and file hygiene hooks on commit
+uv run pytest
+uv run ruff check .
+```
+
+The tests are self-contained: they use LCM types vendored in `tests/lcmtypes` and the in-process `memq://` LCM provider, so no LCM network or MolaRS install is needed. CI runs lint and tests on Python 3.11 to 3.14.
+
+Before a release, run the load benchmarks and compare against [benchmarks/README.md](benchmarks/README.md) to catch performance regressions. They need the full CoMPAS LCM types on `PYTHONPATH`:
+
+```bash
+uv run python benchmarks/load.py all
+```
