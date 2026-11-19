@@ -2,6 +2,34 @@
 
 <!-- version list -->
 
+## v0.9.0-rc.2 (2026-11-19)
+
+### Bug Fixes
+
+- **benchmarks**: Import LCM types from compas_lcmtypes
+  ([`25f4130`](https://github.com/mbari-org/lcm-websocket-server/commit/25f41308bbfd88e9b31aa625c3e56567820c1cf5))
+
+### Build System
+
+- **docker**: One generic image with bundled LCM types, bake definition
+  ([`f7f95ed`](https://github.com/mbari-org/lcm-websocket-server/commit/f7f95ed87ffb750d3e4ad232c0c8cf6b5cd42a3b))
+
+### Continuous Integration
+
+- Upload release assets, smoke-test and publish Docker images
+  ([`6e5766a`](https://github.com/mbari-org/lcm-websocket-server/commit/6e5766a0eb2dbc2084fbd66dfda9059956ee604d))
+
+### Documentation
+
+- Document the generic Docker image, lcmtypes extra and releases
+  ([`485bd06`](https://github.com/mbari-org/lcm-websocket-server/commit/485bd069ccd1b9f0980fd1a4a4cad458d5b92870))
+
+### Features
+
+- Decouple the Dial proxy from MOLARS types; add lcmtypes extra
+  ([`5be0f84`](https://github.com/mbari-org/lcm-websocket-server/commit/5be0f84cb6b3f25d770470d07033a7d9336847c1))
+
+
 ## v0.9.0-rc.1 (2026-11-19)
 
 ### Bug Fixes
