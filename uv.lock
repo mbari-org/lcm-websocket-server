@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -371,7 +371,7 @@ wheels = [
 
 [[package]]
 name = "lcm-websocket-server"
-version = "0.8.0"
+version = "0.9.0rc1"
 source = { editable = "." }
 dependencies = [
     { name = "lcm" },
