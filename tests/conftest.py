@@ -29,6 +29,7 @@ from lcm_websocket_server.apps.dial_proxy import (
     ImageMessageToJPEGHandler,
 )
 from lcm_websocket_server.apps.json_proxy import JSONHandler
+from lcm_websocket_server.lib.handler import LCMWebSocketHandler
 from lcm_websocket_server.lib.image import PixelFormat
 from lcm_websocket_server.lib.lcm_utils.channel_stats import channel_stats
 from lcm_websocket_server.lib.lcm_utils.channel_stats_list import channel_stats_list
@@ -171,3 +172,31 @@ async def running_server(
     except (TimeoutError, asyncio.CancelledError):
         serve_task.cancel()
         await asyncio.gather(serve_task, return_exceptions=True)
+
+
+@pytest_asyncio.fixture
+async def server_factory(republisher: LCMRepublisher):
+    """
+    Factory that starts a server with an arbitrary handler.
+    Returns an async callable: make(handler, **server_kwargs) -> (server, port).
+    Cleans up all started servers on teardown.
+    """
+    started: list[tuple[LCMWebSocketServer, asyncio.Task]] = []
+
+    async def make(handler: LCMWebSocketHandler, **kwargs) -> tuple[LCMWebSocketServer, int]:
+        port = free_port()
+        server = LCMWebSocketServer("localhost", port, handler, republisher, **kwargs)
+        task = asyncio.create_task(server.serve())
+        await asyncio.sleep(0.05)
+        started.append((server, task))
+        return server, port
+
+    yield make
+
+    for server, task in started:
+        server.close()
+        try:
+            await asyncio.wait_for(task, timeout=2.0)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

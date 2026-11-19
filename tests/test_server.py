@@ -12,7 +12,6 @@ import threading
 import time
 
 import pytest
-import pytest_asyncio
 import websockets
 from stdlcm import header_t
 
@@ -21,7 +20,7 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
     LCMRepublisher,
 )
 from lcm_websocket_server.lib.server import ClientRequest, LCMWebSocketServer
-from tests.conftest import free_port, make_header_t
+from tests.conftest import make_header_t
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,38 +31,6 @@ RECV_TIMEOUT = 3.0  # generous timeout; tests run locally with no I/O latency
 
 async def recv(ws) -> str | bytes:
     return await asyncio.wait_for(ws.recv(), timeout=RECV_TIMEOUT)
-
-
-# ---------------------------------------------------------------------------
-# Custom-handler server fixture factory
-# ---------------------------------------------------------------------------
-
-@pytest_asyncio.fixture
-async def server_factory(republisher: LCMRepublisher):
-    """
-    Factory that starts a server with an arbitrary handler.
-    Returns an async callable: make(handler, **server_kwargs) -> (server, port).
-    Cleans up all started servers on teardown.
-    """
-    started: list[tuple[LCMWebSocketServer, asyncio.Task]] = []
-
-    async def make(handler: LCMWebSocketHandler, **kwargs) -> tuple[LCMWebSocketServer, int]:
-        port = free_port()
-        server = LCMWebSocketServer("localhost", port, handler, republisher, **kwargs)
-        task = asyncio.create_task(server.serve())
-        await asyncio.sleep(0.05)
-        started.append((server, task))
-        return server, port
-
-    yield make
-
-    for server, task in started:
-        server.close()
-        try:
-            await asyncio.wait_for(task, timeout=2.0)
-        except (TimeoutError, asyncio.CancelledError):
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------

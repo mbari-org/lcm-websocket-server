@@ -39,6 +39,8 @@ class ServerOptions:
     uvloop: bool = False
     processes: int = 1
     verbosity: int = 0
+    ping_interval: float | None = 20.0
+    ping_timeout: float | None = 20.0
 
     def server_kwargs(self) -> dict[str, Any]:
         """Keyword arguments for LCMWebSocketServer derived from these options."""
@@ -47,6 +49,8 @@ class ServerOptions:
             "spy_emit_interval_ns": self.spy_interval_ns,
             "compression": self.compression,
             "reuse_port": self.processes > 1,
+            "ping_interval": self.ping_interval,
+            "ping_timeout": self.ping_timeout,
         }
 
 
@@ -61,6 +65,8 @@ def add_server_args(parser: argparse.ArgumentParser, compression_default: str) -
     parser.add_argument("--compression", choices=COMPRESSION_CHOICES, default=compression_default, help="WebSocket permessage-deflate compression. Saves bandwidth for JSON at a CPU cost per client; useless for JPEG. Default: %(default)s")
     parser.add_argument("--uvloop", action="store_true", help="Use the uvloop event loop (requires the 'uvloop' extra).")
     parser.add_argument("--processes", type=int, default=1, help="Number of server processes sharing the port (SO_REUSEPORT). Each has its own LCM subscription, encode cache and spy stats. Default: %(default)s")
+    parser.add_argument("--ping-interval", type=float, default=20.0, help="Seconds between keepalive pings; 0 disables. Default: %(default)s")
+    parser.add_argument("--ping-timeout", type=float, default=20.0, help="Seconds to wait for a pong before closing; 0 disables. Raise for slow links carrying large frames. Default: %(default)s")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity level. 0=ERROR, 1=WARNING, 2=INFO, 3=DEBUG. Default: %(default)s")
 
 
@@ -81,6 +87,8 @@ def parse_server_options(args: argparse.Namespace, logger: logging.Logger) -> Se
         uvloop=args.uvloop,
         processes=args.processes,
         verbosity=args.verbose,
+        ping_interval=args.ping_interval or None,
+        ping_timeout=args.ping_timeout or None,
     )
 
 

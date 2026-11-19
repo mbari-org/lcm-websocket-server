@@ -1,7 +1,9 @@
 import asyncio
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http import HTTPStatus
 from urllib.parse import parse_qs, unquote, urlparse
 
 from lcmutils import LCMTypeRegistry
@@ -9,6 +11,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 from websockets.extensions.permessage_deflate import ServerPerMessageDeflateFactory
 from websockets.frames import CloseCode
+from websockets.http11 import Request, Response
 
 from lcm_websocket_server.lib.handler import (
     DEFAULT_CACHE_DEPTH,
@@ -24,6 +27,7 @@ from lcm_websocket_server.lib.lcm_utils.pubsub import (
 )
 from lcm_websocket_server.lib.lcm_utils.spy import LCMSpy, SpyAccumulator
 from lcm_websocket_server.lib.log import LogMixin
+from lcm_websocket_server.lib.metrics import ServerMetrics
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 # WebSocket close reasons are limited to 123 bytes.
@@ -33,6 +37,10 @@ _MAX_CLOSE_REASON = 120
 DEFAULT_LIGHT_WORKERS = 4
 # Heavy work (OpenCV) releases the GIL and parallelises across cores.
 DEFAULT_HEAVY_WORKERS = min(8, os.cpu_count() or 1)
+
+# websockets keepalive defaults (seconds); None disables.
+DEFAULT_PING_INTERVAL = 20.0
+DEFAULT_PING_TIMEOUT = 20.0
 
 
 @dataclass(frozen=True)
@@ -84,6 +92,8 @@ class LCMWebSocketServer(LogMixin):
         encode_cache_depth: int = DEFAULT_CACHE_DEPTH,
         compression: str | None = "deflate",
         reuse_port: bool = False,
+        ping_interval: float | None = DEFAULT_PING_INTERVAL,
+        ping_timeout: float | None = DEFAULT_PING_TIMEOUT,
     ):
         self._host = host
         self._port = port
@@ -100,6 +110,9 @@ class LCMWebSocketServer(LogMixin):
             raise ValueError(f"Unsupported compression: {compression!r}")
         self._compression = compression
         self._reuse_port = reuse_port
+        self._ping_interval = ping_interval
+        self._ping_timeout = ping_timeout
+        self.metrics = ServerMetrics()
         self._cache = EncodeCache(encode_cache_depth)
         self._light_executor = ThreadPoolExecutor(light_workers, thread_name_prefix="lws-light")
         self._heavy_executor = ThreadPoolExecutor(heavy_workers, thread_name_prefix="lws-heavy")
@@ -124,6 +137,7 @@ class LCMWebSocketServer(LogMixin):
             )
         except (ValueError, InvalidChannelRegex) as e:
             self.logger.warning(f"Rejecting client {websocket.id} from {client_host}:{client_port}: {e}")
+            self.metrics.rejected_connections += 1
             await websocket.close(CloseCode.POLICY_VIOLATION, str(e)[:_MAX_CLOSE_REASON])
             return
 
@@ -132,6 +146,7 @@ class LCMWebSocketServer(LogMixin):
         )
 
         self._lcm_republisher.subscribe(observer)
+        self.metrics.client_connected(observer)
         tasks = []
         if request.update_interval_ms is not None:
             tasks.append(asyncio.create_task(self._periodic_loop(observer, websocket, request.update_interval_ms)))
@@ -157,6 +172,7 @@ class LCMWebSocketServer(LogMixin):
                 task.cancel()
             await asyncio.gather(*tasks, closed, return_exceptions=True)
             self._lcm_republisher.unsubscribe(observer)
+            self.metrics.client_disconnected(observer)
             self.logger.info(
                 f"Client {websocket.id} disconnected; "
                 f"active subscribers: {self._lcm_republisher.subscriber_count}"
@@ -167,6 +183,7 @@ class LCMWebSocketServer(LogMixin):
         Encode a message for sending, at most once per message across all clients.
         Cache hits are served on the loop without a thread hop.
         """
+        self.metrics.encode_requests += 1
         return await self._cache.get_or_encode(channel, data, lambda: self._run_handler(channel, data))
 
     async def _run_handler(self, channel: str, data: bytes):
@@ -176,16 +193,28 @@ class LCMWebSocketServer(LogMixin):
         """
         try:
             executor = self._heavy_executor if self._handler.is_heavy(channel, data) else self._light_executor
-            return await asyncio.get_running_loop().run_in_executor(executor, self._handler.handle, channel, data)
+            return await asyncio.get_running_loop().run_in_executor(executor, self._timed_handle, channel, data)
         except Exception as e:  # noqa: BLE001 - a bad message must not end the stream
             self.logger.error(f"Error during message handling on channel {channel!r}: {e!r}")
             return None
+
+    def _timed_handle(self, channel: str, data: bytes):
+        """handler.handle() with timing; runs in a worker thread."""
+        start = time.perf_counter()
+        error = True
+        try:
+            result = self._handler.handle(channel, data)
+            error = False
+            return result
+        finally:
+            self.metrics.record_encode(time.perf_counter() - start, error)
 
     async def _send(self, websocket: ServerConnection, payload) -> None:
         if type(payload) is TextPayload:
             await websocket.send(payload, text=True)
         else:
             await websocket.send(payload)
+        self.metrics.record_sent(len(payload))
 
     async def _stream_loop(self, observer: LCMObserver, websocket: ServerConnection):
         """
@@ -236,21 +265,44 @@ class LCMWebSocketServer(LogMixin):
         """
         Run the server.
         """
+        self._lcm_republisher.add_tap(self.metrics.record_message)
         if self._spy_accumulator is not None:
             self._lcm_republisher.add_tap(self._spy_accumulator.record)
+        lag_probe = asyncio.create_task(self.metrics.probe_loop_lag())
         try:
             async with serve(
                 self.websocket_handler, self._host, self._port, **self._serve_kwargs()
             ) as self._server:
                 await self._server.wait_closed()
         finally:
+            lag_probe.cancel()
+            self._lcm_republisher.remove_tap(self.metrics.record_message)
             if self._spy_accumulator is not None:
                 self._lcm_republisher.remove_tap(self._spy_accumulator.record)
             self._light_executor.shutdown(wait=False, cancel_futures=True)
             self._heavy_executor.shutdown(wait=False, cancel_futures=True)
 
+    def _process_request(self, connection: ServerConnection, request: Request) -> Response | None:
+        """
+        Answer plain HTTP GETs for /healthz and /metrics on the WebSocket port.
+        WebSocket upgrade requests (any path) proceed to the handshake.
+        """
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            return None
+        path = urlparse(request.path).path
+        if path == "/healthz":
+            return connection.respond(HTTPStatus.OK, "ok\n")
+        if path == "/metrics":
+            return connection.respond(HTTPStatus.OK, self.metrics.render())
+        return None
+
     def _serve_kwargs(self) -> dict:
-        kwargs = {"compression": None}
+        kwargs = {
+            "compression": None,
+            "process_request": self._process_request,
+            "ping_interval": self._ping_interval,
+            "ping_timeout": self._ping_timeout,
+        }
         if self._compression == "deflate":
             # websockets' default deflate settings with compression level 1:
             # roughly half the CPU of the default level 6 for a similar ratio on JSON.

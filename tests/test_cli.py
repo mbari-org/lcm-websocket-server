@@ -52,7 +52,13 @@ class TestServerOptions:
             "spy_emit_interval_ns": 1_000_000_000,
             "compression": None,
             "reuse_port": True,
+            "ping_interval": 20.0,
+            "ping_timeout": 20.0,
         }
+
+    def test_zero_disables_keepalive(self):
+        opts = parse(["--ping-interval", "0", "--ping-timeout", "0"])
+        assert opts.ping_interval is None and opts.ping_timeout is None
 
     def test_poll_interval_accepted_but_deprecated(self, caplog):
         with caplog.at_level(logging.WARNING, logger="test-cli"):
